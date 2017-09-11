@@ -1,23 +1,24 @@
-package main
+package libclient
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"math/big"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	quic "github.com/lucas-clemente/quic-go"
+
+	"bitbucket.org/qdeconinck/quic-traffic/common"
 )
 
 const (
@@ -27,6 +28,7 @@ const (
 
 var (
 	addr = "localhost:4242"
+	buffer bytes.Buffer
 	counter int
 	counterLock sync.Mutex
 	delays = make([]time.Duration, 0)
@@ -43,17 +45,11 @@ var (
 
 // We start a server echoing data on the first stream the client opens,
 // then connect with a client, send the message, and wait for its receipt.
-func main() {
-	addrF := flag.String("addr", "localhost:4242", "Address to dial")
-	runTimeF := flag.Duration("runTime", 30 * time.Second, "Running time of test")
-	multipath := flag.Bool("m", false, "multipath")
-	flag.Parse()
-	addr = *addrF
-	runTime = *runTimeF + 200 * time.Millisecond
+func Run(cfg common.TrafficConfig) string {
 	printChan<-struct{}{}
-	err := clientMain(*multipath)
-	fmt.Printf("Exiting client main with error %v\n", err)
-	printer()
+	err := clientMain(cfg.Multipath)
+	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
+	return printer()
 }
 
 func max(a int, b int) int {
@@ -63,14 +59,14 @@ func max(a int, b int) int {
 	return b
 }
 
-func printer() {
+func printer() string {
 	<-printChan
-	fmt.Printf("Missed: %d\n", missed)
+	buffer.WriteString(fmt.Sprintf("Missed: %d\n", missed))
 	for _, d := range(delays) {
-		fmt.Println(int64(d/time.Millisecond))
+		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Millisecond)))
 	}
 	time.Sleep(time.Second)
-	os.Exit(0)
+	return buffer.String()
 }
 
 func sendMessage() error {
@@ -103,7 +99,6 @@ sendLoop:
 			}
 		}
 	}
-	printer()
 }
 
 func clientMain(multipath bool) error {

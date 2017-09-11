@@ -6,8 +6,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"math/big"
 	"strconv"
@@ -42,29 +42,37 @@ func echoServer() error {
 	if err != nil {
 		return err
 	}
-	sess, err := listener.Accept()
-	if err != nil {
-		return err
+	for {
+		sess, err := listener.Accept()
+		if err != nil {
+			return err
+		}
+		go handleClient(sess)
 	}
+	return err
+}
+
+func handleClient(sess quic.Session) {
+	fmt.Printf("Accept new connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
 	stream, err := sess.AcceptStream()
 	if err != nil {
 		panic(err)
 	}
 	buf := make([]byte, MsgLen)
-	for ;; {
+serveLoop:
+	for {
 		read, err := io.ReadFull(stream, buf)
 		if err != nil {
 			stream.Close()
-			stream.Close()
-			return err
+			break serveLoop
 		}
 		msg := string(buf)
 		splitMsg := strings.Split(msg, "&")
 		expectedReqSize, _ := strconv.Atoi(splitMsg[1])
 		if read != expectedReqSize {
 			stream.Close()
-			stream.Close()
-			return errors.New("Did not read the expected size; " + strconv.Itoa(read) + " != " + splitMsg[1])
+			fmt.Println("Did not read the expected size; " + strconv.Itoa(read) + " != " + splitMsg[1])
+			break serveLoop
 		}
 		sleepTimeSec, _ := strconv.Atoi(splitMsg[3])
 		if sleepTimeSec > 0 {
@@ -76,11 +84,11 @@ func echoServer() error {
 		_, err = stream.Write([]byte(res))
 		if err != nil {
 			stream.Close()
-			stream.Close()
-			return err
+			fmt.Printf("Got error: %v", err)
+			break serveLoop
 		}
 	}
-	return err
+	fmt.Printf("Close connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
 }
 
 // Setup a bare-bones TLS config for the server
