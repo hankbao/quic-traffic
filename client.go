@@ -7,6 +7,7 @@ import (
 
 	bulk "bitbucket.org/qdeconinck/quic-traffic/bulk/libclient"
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
+	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
 )
 
 func Run(traffic string, cache bool, multipath bool, output string, url string) string {
@@ -23,6 +24,8 @@ func Run(traffic string, cache bool, multipath bool, output string, url string) 
 		return bulk.Run(cfg)
 	case "reqres":
 		return reqres.Run(cfg)
+	case "siri":
+		return siri.Run(cfg)
 	default:
 		return "Unknown traffic"
 	}
