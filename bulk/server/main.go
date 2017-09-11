@@ -18,7 +18,6 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/lucas-clemente/quic-go/h2quic"
-	"github.com/lucas-clemente/quic-go/internal/utils"
 )
 
 type binds []string
@@ -89,7 +88,7 @@ func init() {
 				}
 			}
 			if err != nil {
-				utils.Infof("Error receiving upload: %#v", err)
+				log.Printf("Error receiving upload: %#v", err)
 			}
 		}
 		io.WriteString(w, `<html><body><form action="/demo/upload" method="post" enctype="multipart/form-data">
@@ -115,20 +114,12 @@ func main() {
 	}()
 	// runtime.SetBlockProfileRate(1)
 
-	verbose := flag.Bool("v", false, "verbose")
 	bs := binds{}
 	flag.Var(&bs, "bind", "bind to")
 	certPath := flag.String("certpath", getBuildDir(), "certificate directory")
 	www := flag.String("www", "/var/www", "www data")
 	tcp := flag.Bool("tcp", false, "also listen on TCP")
 	flag.Parse()
-
-	if *verbose {
-		utils.SetLogLevel(utils.LogLevelDebug)
-	} else {
-		utils.SetLogLevel(utils.LogLevelInfo)
-	}
-	utils.SetLogTimeFormat("")
 
 	certFile := *certPath + "/fullchain.pem"
 	keyFile := *certPath + "/privkey.pem"
