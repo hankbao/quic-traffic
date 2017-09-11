@@ -14,11 +14,13 @@ import (
 	quic "github.com/lucas-clemente/quic-go"
 
 	"github.com/lucas-clemente/quic-go/h2quic"
+
+	"bitbucket.org/qdeconinck/quic-traffic/common"
 )
 
-func Run(cache bool, multipath bool, output string, url string) string {
-	if output != "" {
-		logfile, err := os.Create(output)
+func Run(cfg common.TrafficConfig) string {
+	if cfg.Output != "" {
+		logfile, err := os.Create(cfg.Output)
 		if err != nil {
 			return err.Error()
 		}
@@ -27,8 +29,8 @@ func Run(cache bool, multipath bool, output string, url string) string {
 	}
 
 	quicConfig := &quic.Config{
-		CreatePaths: multipath,
-		CacheHandshake: cache,
+		CreatePaths: cfg.Multipath,
+		CacheHandshake: cfg.Cache,
 	}
 
 	hclient := &http.Client{
@@ -38,7 +40,7 @@ func Run(cache bool, multipath bool, output string, url string) string {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	log.Printf("GET %s", url)
+	log.Printf("GET %s", cfg.Url)
 	var elapsedStr string
 	go func(addr string) {
 		start := time.Now()
@@ -56,7 +58,7 @@ func Run(cache bool, multipath bool, output string, url string) string {
 		elapsedStr = fmt.Sprintf("%s", elapsed)
 		rsp.Body.Close()
 		wg.Done()
-	}(url)
+	}(cfg.Url)
 	wg.Wait()
 
 	return elapsedStr
