@@ -1,19 +1,11 @@
 package main
 
 import (
-	"bytes"
-	"crypto/tls"
 	"flag"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"sync"
-	"time"
+	"fmt"
 
-	quic "github.com/lucas-clemente/quic-go"
-
-	"github.com/lucas-clemente/quic-go/h2quic"
+	"bitbucket.org/qdeconinck/quic-traffic/bulk/libclient"
+	"bitbucket.org/qdeconinck/quic-traffic/common"
 )
 
 func main() {
@@ -23,44 +15,13 @@ func main() {
 	flag.Parse()
 	urls := flag.Args()
 
-	if *output != "" {
-		logfile, err := os.Create(*output)
-		if err != nil {
-			panic(err)
-		}
-		defer logfile.Close()
-		log.SetOutput(logfile)
+	cfg := common.TrafficConfig{
+		Cache:     *cache,
+		Multipath: *multipath,
+		Output:    *output,
+		Url:       urls[0],
 	}
 
-	quicConfig := &quic.Config{
-		CreatePaths: *multipath,
-		CacheHandshake: *cache,
-	}
-
-	hclient := &http.Client{
-		Transport: &h2quic.RoundTripper{QuicConfig: quicConfig, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(len(urls))
-	for _, addr := range urls {
-		log.Printf("GET %s", addr)
-		go func(addr string) {
-			start := time.Now()
-			rsp, err := hclient.Get(addr)
-			if err != nil {
-				panic(err)
-			}
-
-			body := &bytes.Buffer{}
-			_, err = io.Copy(body, rsp.Body)
-			if err != nil {
-				panic(err)
-			}
-			elapsed := time.Since(start)
-			log.Printf("%s", elapsed)
-			wg.Done()
-		}(addr)
-	}
-	wg.Wait()
+	time := libclient.Run(cfg)
+	fmt.Printf("%s", time)
 }

@@ -1,4 +1,4 @@
-package bulkclient
+package libclient
 
 import (
 	"bytes"
