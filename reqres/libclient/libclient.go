@@ -46,6 +46,7 @@ var (
 // We start a server echoing data on the first stream the client opens,
 // then connect with a client, send the message, and wait for its receipt.
 func Run(cfg common.TrafficConfig) string {
+	addr = cfg.Url
 	printChan<-struct{}{}
 	err := clientMain(cfg.Multipath)
 	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
