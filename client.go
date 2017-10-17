@@ -8,6 +8,8 @@ import (
 	bulk "bitbucket.org/qdeconinck/quic-traffic/bulk/libclient"
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
+
+	quic "github.com/lucas-clemente/quic-go"
 )
 
 func Run(traffic string, cache bool, multipath bool, output string, url string) string {
@@ -18,6 +20,8 @@ func Run(traffic string, cache bool, multipath bool, output string, url string) 
 		Url:       url,
 		RunTime:   30 * time.Second,
 	}
+
+	quic.SetLoggerParams("quictraffic.log", time.Duration(10) * time.Millisecond)
 
 	switch traffic {
 	case "bulk":
