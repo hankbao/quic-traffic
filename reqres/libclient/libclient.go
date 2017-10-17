@@ -28,17 +28,17 @@ const (
 
 var (
 	addr = "localhost:4242"
-	buffer bytes.Buffer
+	buffer *bytes.Buffer
 	counter int
 	counterLock sync.Mutex
-	delays = make([]time.Duration, 0)
+	delays []time.Duration
 	messageID int
 	missed int
-	printChan = make(chan struct{}, 1)
+	printChan chan struct{}
 	querySize = 750
 	resSize = 750
 	runTime = 30 * time.Second
-	sentTime = make(map[int]time.Time)
+	sentTime map[int]time.Time
 	startTime time.Time
 	stream quic.Stream
 )
@@ -46,6 +46,10 @@ var (
 // We start a server echoing data on the first stream the client opens,
 // then connect with a client, send the message, and wait for its receipt.
 func Run(cfg common.TrafficConfig) string {
+	buffer = new(bytes.Buffer)
+	delays = make([]time.Duration, 0)
+	sentTime = make(map[int]time.Time)
+	printChan = make(chan struct{}, 1)
 	addr = cfg.Url
 	printChan<-struct{}{}
 	err := clientMain(cfg.Multipath)
