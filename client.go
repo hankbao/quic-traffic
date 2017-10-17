@@ -2,6 +2,7 @@ package quictraffic
 
 import (
 	"time"
+	"strings"
 
 	"bitbucket.org/qdeconinck/quic-traffic/common"
 
@@ -12,7 +13,7 @@ import (
 	quic "github.com/lucas-clemente/quic-go"
 )
 
-func Run(traffic string, cache bool, multipath bool, output string, url string) string {
+func Run(traffic string, cache bool, multipath bool, logFile string, output string, url string) string {
 	cfg := common.TrafficConfig{
 		Cache:     cache,
 		Multipath: multipath,
@@ -20,17 +21,25 @@ func Run(traffic string, cache bool, multipath bool, output string, url string) 
 		Url:       url,
 		RunTime:   30 * time.Second,
 	}
+	if strings.HasPrefix(logFile, "file://") {
+		logFile = logFile[7:]
+	}
+	quic.SetLoggerParams(logFile, time.Duration(10) * time.Millisecond)
 
-	quic.SetLoggerParams("quictraffic.log", time.Duration(10) * time.Millisecond)
+	var res string = ""
 
 	switch traffic {
 	case "bulk":
-		return bulk.Run(cfg)
+		res = bulk.Run(cfg)
 	case "reqres":
-		return reqres.Run(cfg)
+		res = reqres.Run(cfg)
 	case "siri":
-		return siri.Run(cfg)
+		res = siri.Run(cfg)
 	default:
-		return "Unknown traffic"
+		res = "Unknown traffic"
 	}
+
+	quic.StopLogger()
+
+	return res
 }
