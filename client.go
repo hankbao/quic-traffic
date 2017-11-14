@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"bitbucket.org/qdeconinck/quic-traffic/common"
+	quic "github.com/lucas-clemente/quic-go"
 
 	bulk "bitbucket.org/qdeconinck/quic-traffic/bulk/libclient"
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
@@ -22,7 +23,7 @@ func Run(traffic string, cache bool, maxPathID int, logFile string, output strin
 	if strings.HasPrefix(logFile, "file://") {
 		logFile = logFile[7:]
 	}
-	//quic.SetLoggerParams(logFile, time.Duration(10)*time.Millisecond)
+	quic.SetLoggerParams(logFile, time.Duration(10)*time.Millisecond)
 
 	var res string = ""
 
@@ -37,7 +38,7 @@ func Run(traffic string, cache bool, maxPathID int, logFile string, output strin
 		res = "Unknown traffic"
 	}
 
-	//quic.StopLogger()
+	quic.StopLogger()
 
 	return res
 }
