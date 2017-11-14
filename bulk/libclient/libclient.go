@@ -29,7 +29,7 @@ func Run(cfg common.TrafficConfig) string {
 	}
 
 	quicConfig := &quic.Config{
-		CreatePaths: cfg.Multipath,
+		MaxPathID:      cfg.MaxPathID,
 		CacheHandshake: cfg.Cache,
 	}
 
