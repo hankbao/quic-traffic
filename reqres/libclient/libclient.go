@@ -52,7 +52,7 @@ func Run(cfg common.TrafficConfig) string {
 	printChan = make(chan struct{}, 1)
 	addr = cfg.Url
 	printChan <- struct{}{}
-	err := clientMain(cfg.MaxPathID)
+	err := clientMain(cfg)
 	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
 	return printer()
 }
@@ -106,12 +106,13 @@ sendLoop:
 	}
 }
 
-func clientMain(maxPathID uint8) error {
+func clientMain(cfg common.TrafficConfig) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
 	cfgClient := &quic.Config{
-		MaxPathID: maxPathID,
+		MaxPathID: cfg.MaxPathID,
+		NotifyID:  cfg.NotifyID,
 	}
 	fmt.Println("Trying to connect...")
 	// TODO: specify address

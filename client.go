@@ -1,3 +1,5 @@
+// +build darwin
+
 package quictraffic
 
 import (
@@ -12,10 +14,12 @@ import (
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
 )
 
-func Run(traffic string, cache bool, maxPathID int, logFile string, output string, url string) string {
+// Run the QUIC traffic experiment
+func Run(traffic string, cache bool, maxPathID int, logFile string, output string, url string, notifyID string) string {
 	cfg := common.TrafficConfig{
 		Cache:     cache,
 		MaxPathID: uint8(maxPathID),
+		NotifyID:  notifyID,
 		Output:    output,
 		Url:       url,
 		RunTime:   30 * time.Second,
@@ -23,9 +27,10 @@ func Run(traffic string, cache bool, maxPathID int, logFile string, output strin
 	if strings.HasPrefix(logFile, "file://") {
 		logFile = logFile[7:]
 	}
-	quic.SetLoggerParams(logFile, time.Duration(10)*time.Millisecond)
 
-	var res string = ""
+	quic.SetLoggerParams(logFile, time.Duration(1000)*time.Millisecond)
+
+	var res string
 
 	switch traffic {
 	case "bulk":
@@ -41,4 +46,13 @@ func Run(traffic string, cache bool, maxPathID int, logFile string, output strin
 	quic.StopLogger()
 
 	return res
+}
+
+// NotifyReachability change for the notifyID
+func NotifyReachability(notifyID string) {
+	callback, ok := quic.GetNotifier(notifyID)
+	if ok {
+		print("Notifying ", notifyID)
+		callback.Notify()
+	}
 }
