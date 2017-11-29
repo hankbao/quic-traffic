@@ -58,6 +58,7 @@ func Run(cfg common.TrafficConfig) string {
 		elapsed := time.Since(start)
 		elapsedStr = fmt.Sprintf("%s", elapsed)
 		rsp.Body.Close()
+		log.Printf("%s", body)
 		wg.Done()
 	}(cfg.Url)
 	wg.Wait()
