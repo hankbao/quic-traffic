@@ -16,13 +16,14 @@ import (
 
 // RunConfig provides needed configuration
 type RunConfig interface {
-	Traffic() string
 	Cache() bool
-	MaxPathID() int
 	LogFile() string
-	Output() string
-	URL() string
+	MaxPathID() int
 	NotifyID() string
+	Output() string
+	PrintBody() bool
+	Traffic() string
+	URL() string
 }
 
 // Run the QUIC traffic experiment
@@ -36,7 +37,8 @@ func Run(runcfg RunConfig) string {
 		MaxPathID: uint8(runcfg.MaxPathID()),
 		NotifyID:  runcfg.NotifyID(),
 		Output:    output,
-		Url:       runcfg.URL(),
+		PrintBody: runcfg.PrintBody(),
+		URL:       runcfg.URL(),
 		RunTime:   30 * time.Second,
 	}
 	logFile := runcfg.LogFile()

@@ -41,7 +41,7 @@ func Run(cfg common.TrafficConfig) string {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	log.Printf("GET %s", cfg.Url)
+	log.Printf("GET %s", cfg.URL)
 	var elapsedStr string
 	go func(addr string) {
 		start := time.Now()
@@ -58,9 +58,11 @@ func Run(cfg common.TrafficConfig) string {
 		elapsed := time.Since(start)
 		elapsedStr = fmt.Sprintf("%s", elapsed)
 		rsp.Body.Close()
-		log.Printf("%s", body)
+		if cfg.PrintBody {
+			log.Printf("%s", body)
+		}
 		wg.Done()
-	}(cfg.Url)
+	}(cfg.URL)
 	wg.Wait()
 
 	return elapsedStr

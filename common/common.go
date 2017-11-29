@@ -10,7 +10,10 @@ type TrafficConfig struct {
 	MaxPathID uint8
 	NotifyID  string
 	Output    string
-	Url       string
+	URL       string
+
+	// For bulk
+	PrintBody bool
 
 	// For interactive
 	RunTime time.Duration

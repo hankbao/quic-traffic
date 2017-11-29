@@ -56,7 +56,7 @@ func Run(cfg common.TrafficConfig) string {
 	delays = make([]time.Duration, 0)
 	sentTime = make(map[int]time.Time)
 	printChan = make(chan struct{}, 1)
-	addr = cfg.Url
+	addr = cfg.URL
 	runTime = cfg.RunTime
 	printChan <- struct{}{}
 	err := clientMain(cfg)

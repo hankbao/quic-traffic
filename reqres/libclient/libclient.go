@@ -50,7 +50,7 @@ func Run(cfg common.TrafficConfig) string {
 	delays = make([]time.Duration, 0)
 	sentTime = make(map[int]time.Time)
 	printChan = make(chan struct{}, 1)
-	addr = cfg.Url
+	addr = cfg.URL
 	printChan <- struct{}{}
 	err := clientMain(cfg)
 	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
