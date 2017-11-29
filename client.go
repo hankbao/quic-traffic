@@ -14,16 +14,32 @@ import (
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
 )
 
+// RunConfig provides needed configuration
+type RunConfig interface {
+	Traffic() string
+	Cache() bool
+	MaxPathID() int
+	LogFile() string
+	Output() string
+	URL() string
+	NotifyID() string
+}
+
 // Run the QUIC traffic experiment
-func Run(traffic string, cache bool, maxPathID int, logFile string, output string, url string, notifyID string) string {
+func Run(runcfg RunConfig) string {
+	output := runcfg.Output()
+	if strings.HasPrefix(output, "file://") {
+		output = output[7:]
+	}
 	cfg := common.TrafficConfig{
-		Cache:     cache,
-		MaxPathID: uint8(maxPathID),
-		NotifyID:  notifyID,
+		Cache:     runcfg.Cache(),
+		MaxPathID: uint8(runcfg.MaxPathID()),
+		NotifyID:  runcfg.NotifyID(),
 		Output:    output,
-		Url:       url,
+		Url:       runcfg.URL(),
 		RunTime:   30 * time.Second,
 	}
+	logFile := runcfg.LogFile()
 	if strings.HasPrefix(logFile, "file://") {
 		logFile = logFile[7:]
 	}
@@ -32,7 +48,7 @@ func Run(traffic string, cache bool, maxPathID int, logFile string, output strin
 
 	var res string
 
-	switch traffic {
+	switch runcfg.Traffic() {
 	case "bulk":
 		res = bulk.Run(cfg)
 	case "reqres":
