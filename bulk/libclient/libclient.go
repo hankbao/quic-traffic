@@ -42,18 +42,22 @@ func Run(cfg common.TrafficConfig) string {
 
 	wg.Add(1)
 	log.Printf("GET %s", cfg.URL)
-	var elapsedStr string
+	var elapsedStr = "-1.0s"
 	go func(addr string) {
 		start := time.Now()
 		rsp, err := hclient.Get(addr)
 		if err != nil {
-			panic(err)
+			log.Printf("ERROR: %s", err)
+			wg.Done()
+			return
 		}
 
 		body := &bytes.Buffer{}
 		_, err = io.Copy(body, rsp.Body)
 		if err != nil {
-			panic(err)
+			log.Printf("ERROR: %s", err)
+			wg.Done()
+			return
 		}
 		elapsed := time.Since(start)
 		elapsedStr = fmt.Sprintf("%s", elapsed)
