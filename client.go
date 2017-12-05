@@ -1,5 +1,3 @@
-// +build darwin
-
 package quictraffic
 
 import (
@@ -10,6 +8,7 @@ import (
 	quic "github.com/lucas-clemente/quic-go"
 
 	bulk "bitbucket.org/qdeconinck/quic-traffic/bulk/libclient"
+	qperf "bitbucket.org/qdeconinck/quic-traffic/qperf/libclient"
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
 )
@@ -53,6 +52,8 @@ func Run(runcfg RunConfig) string {
 	switch runcfg.Traffic() {
 	case "bulk":
 		res = bulk.Run(cfg)
+	case "qperf":
+		res = qperf.Run(cfg)
 	case "reqres":
 		res = reqres.Run(cfg)
 	case "siri":
