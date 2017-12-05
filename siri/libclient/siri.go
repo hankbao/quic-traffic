@@ -23,30 +23,30 @@ import (
 )
 
 const (
-	burstSize = 9
+	burstSize         = 9
 	intervalBurstTime = 3000 * time.Millisecond
-	intervalTime = 300 * time.Millisecond
-	maxID = 100
+	intervalTime      = 300 * time.Millisecond
+	maxID             = 100
 )
 
 var (
-	addr = "localhost:4242"
-	buffer *bytes.Buffer
-	bufferSize = 9
-	counter int
-	counterLock sync.Mutex
-	delays []time.Duration
+	addr           = "localhost:4242"
+	buffer         *bytes.Buffer
+	bufferSize     = 9
+	counter        int
+	counterLock    sync.Mutex
+	delays         []time.Duration
 	maxPayloadSize = 500
-	messageID int
+	messageID      int
 	minPayloadSize = 85
-	missed int
-	printChan chan struct{}
-	querySize = 2500
-	resSize = 750
-	runTime = 30 * time.Second
-	sentTime map[int]time.Time
-	startTime time.Time
-	stream quic.Stream
+	missed         int
+	printChan      chan struct{}
+	querySize      = 2500
+	resSize        = 750
+	runTime        = 30 * time.Second
+	sentTime       map[int]time.Time
+	startTime      time.Time
+	stream         quic.Stream
 )
 
 // We start a server echoing data on the first stream the client opens,
@@ -56,10 +56,10 @@ func Run(cfg common.TrafficConfig) string {
 	delays = make([]time.Duration, 0)
 	sentTime = make(map[int]time.Time)
 	printChan = make(chan struct{}, 1)
-	addr = cfg.Url
+	addr = cfg.URL
 	runTime = cfg.RunTime
-	printChan<-struct{}{}
-	err := clientMain(cfg.Multipath)
+	printChan <- struct{}{}
+	err := clientMain(cfg)
 	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
 	return printer()
 }
@@ -74,7 +74,7 @@ func max(a int, b int) int {
 func printer() string {
 	<-printChan
 	buffer.WriteString(fmt.Sprintf("Missed: %d\n", missed))
-	for _, d := range(delays) {
+	for _, d := range delays {
 		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Millisecond)))
 	}
 	time.Sleep(time.Second)
@@ -90,8 +90,8 @@ func sizeOfNextPacket(remainToSend int) int {
 	var randomPart int
 
 	// Case 2)
-	if (remainToSend - maxPayloadSize < minPayloadSize) {
-		randomPart = random.Intn(maxPayloadSize - 2 * minPayloadSize + 1)
+	if remainToSend-maxPayloadSize < minPayloadSize {
+		randomPart = random.Intn(maxPayloadSize - 2*minPayloadSize + 1)
 	} else {
 		// Case 3)
 		randomPart = random.Intn(maxPayloadSize - minPayloadSize + 1)
@@ -108,7 +108,7 @@ func sendMessage() error {
 	startString := strconv.Itoa(messageID) + "&" + strconv.Itoa(querySize) + "&" + strconv.Itoa(resSize) + "&" + "0" + "&"
 	messageID = (messageID + 1) % maxID
 	bytesToSend := max(len(startString), sizeOfNextPacket(remainToBeSent))
-	msg := startString + strings.Repeat("0", bytesToSend - len(startString))
+	msg := startString + strings.Repeat("0", bytesToSend-len(startString))
 	_, err := stream.Write([]byte(msg))
 	if err != nil {
 		return err
@@ -124,7 +124,7 @@ sendingLoop:
 		}
 		bytesToSend = sizeOfNextPacket(remainToBeSent)
 		if remainToBeSent == bytesToSend {
-			msg = strings.Repeat("0", bytesToSend - 1) + "\n"
+			msg = strings.Repeat("0", bytesToSend-1) + "\n"
 		} else {
 			msg = strings.Repeat("0", bytesToSend)
 		}
@@ -143,7 +143,7 @@ sendingLoop:
 func clientSender() {
 	pktCounter := 0
 sendLoop:
-	for ;; {
+	for {
 		if stream == nil {
 			break sendLoop
 		}
@@ -156,7 +156,7 @@ sendLoop:
 		if time.Since(startTime) >= runTime {
 			stream.Close()
 			break sendLoop
-		} else if counter < querySize * bufferSize {
+		} else if counter < querySize*bufferSize {
 			err := sendMessage()
 			if err != nil {
 				stream.Close()
@@ -169,12 +169,13 @@ sendLoop:
 	}
 }
 
-func clientMain(multipath bool) error {
+func clientMain(cfg common.TrafficConfig) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
 	cfgClient := &quic.Config{
-		CreatePaths: multipath,
+		MaxPathID: cfg.MaxPathID,
+		NotifyID:  cfg.NotifyID,
 	}
 	fmt.Println("Trying to connect...")
 	// TODO: specify address

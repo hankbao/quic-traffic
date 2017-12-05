@@ -23,24 +23,24 @@ import (
 
 const (
 	intervalTime = 400 * time.Millisecond
-	maxID = 100
+	maxID        = 100
 )
 
 var (
-	addr = "localhost:4242"
-	buffer *bytes.Buffer
-	counter int
+	addr        = "localhost:4242"
+	buffer      *bytes.Buffer
+	counter     int
 	counterLock sync.Mutex
-	delays []time.Duration
-	messageID int
-	missed int
-	printChan chan struct{}
-	querySize = 750
-	resSize = 750
-	runTime = 30 * time.Second
-	sentTime map[int]time.Time
-	startTime time.Time
-	stream quic.Stream
+	delays      []time.Duration
+	messageID   int
+	missed      int
+	printChan   chan struct{}
+	querySize   = 750
+	resSize     = 750
+	runTime     = 30 * time.Second
+	sentTime    map[int]time.Time
+	startTime   time.Time
+	stream      quic.Stream
 )
 
 // We start a server echoing data on the first stream the client opens,
@@ -50,9 +50,9 @@ func Run(cfg common.TrafficConfig) string {
 	delays = make([]time.Duration, 0)
 	sentTime = make(map[int]time.Time)
 	printChan = make(chan struct{}, 1)
-	addr = cfg.Url
-	printChan<-struct{}{}
-	err := clientMain(cfg.Multipath)
+	addr = cfg.URL
+	printChan <- struct{}{}
+	err := clientMain(cfg)
 	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
 	return printer()
 }
@@ -67,7 +67,7 @@ func max(a int, b int) int {
 func printer() string {
 	<-printChan
 	buffer.WriteString(fmt.Sprintf("Missed: %d\n", missed))
-	for _, d := range(delays) {
+	for _, d := range delays {
 		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Millisecond)))
 	}
 	time.Sleep(time.Second)
@@ -81,14 +81,14 @@ func sendMessage() error {
 	sentTime[messageID] = time.Now()
 	startString := strconv.Itoa(messageID) + "&" + strconv.Itoa(querySize) + "&" + strconv.Itoa(resSize) + "&" + "0" + "&"
 	messageID = (messageID + 1) % maxID
-	msg := startString + strings.Repeat("0", querySize - len(startString))
+	msg := startString + strings.Repeat("0", querySize-len(startString))
 	_, err := stream.Write([]byte(msg))
 	return err
 }
 
 func clientSender() {
 sendLoop:
-	for ;; {
+	for {
 		if stream == nil {
 			break sendLoop
 		}
@@ -106,12 +106,13 @@ sendLoop:
 	}
 }
 
-func clientMain(multipath bool) error {
+func clientMain(cfg common.TrafficConfig) error {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
 	cfgClient := &quic.Config{
-		CreatePaths: multipath,
+		MaxPathID: cfg.MaxPathID,
+		NotifyID:  cfg.NotifyID,
 	}
 	fmt.Println("Trying to connect...")
 	// TODO: specify address
@@ -130,7 +131,7 @@ func clientMain(multipath bool) error {
 
 	buf := make([]byte, resSize)
 listenLoop:
-	for ;; {
+	for {
 		if stream == nil {
 			break listenLoop
 		}

@@ -1,36 +1,76 @@
+// +build darwin
+
 package quictraffic
 
 import (
+	"strings"
 	"time"
 
 	"bitbucket.org/qdeconinck/quic-traffic/common"
+	quic "github.com/lucas-clemente/quic-go"
 
 	bulk "bitbucket.org/qdeconinck/quic-traffic/bulk/libclient"
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
-
-	quic "github.com/lucas-clemente/quic-go"
 )
 
-func Run(traffic string, cache bool, multipath bool, output string, url string) string {
+// RunConfig provides needed configuration
+type RunConfig interface {
+	Cache() bool
+	LogFile() string
+	MaxPathID() int
+	NotifyID() string
+	Output() string
+	PrintBody() bool
+	Traffic() string
+	URL() string
+}
+
+// Run the QUIC traffic experiment
+func Run(runcfg RunConfig) string {
+	output := runcfg.Output()
+	if strings.HasPrefix(output, "file://") {
+		output = output[7:]
+	}
 	cfg := common.TrafficConfig{
-		Cache:     cache,
-		Multipath: multipath,
+		Cache:     runcfg.Cache(),
+		MaxPathID: uint8(runcfg.MaxPathID()),
+		NotifyID:  runcfg.NotifyID(),
 		Output:    output,
-		Url:       url,
+		PrintBody: runcfg.PrintBody(),
+		URL:       runcfg.URL(),
 		RunTime:   30 * time.Second,
 	}
+	logFile := runcfg.LogFile()
+	if strings.HasPrefix(logFile, "file://") {
+		logFile = logFile[7:]
+	}
 
-	quic.SetLoggerParams("quictraffic.log", time.Duration(10) * time.Millisecond)
+	quic.SetLoggerParams(logFile, time.Duration(1000)*time.Millisecond)
 
-	switch traffic {
+	var res string
+
+	switch runcfg.Traffic() {
 	case "bulk":
-		return bulk.Run(cfg)
+		res = bulk.Run(cfg)
 	case "reqres":
-		return reqres.Run(cfg)
+		res = reqres.Run(cfg)
 	case "siri":
-		return siri.Run(cfg)
+		res = siri.Run(cfg)
 	default:
-		return "Unknown traffic"
+		res = "Unknown traffic"
+	}
+
+	quic.StopLogger()
+
+	return res
+}
+
+// NotifyReachability change for the notifyID
+func NotifyReachability(notifyID string) {
+	callback, ok := quic.GetNotifier(notifyID)
+	if ok {
+		print("Notifying ", notifyID)
+		callback.Notify()
 	}
 }

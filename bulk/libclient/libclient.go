@@ -29,7 +29,8 @@ func Run(cfg common.TrafficConfig) string {
 	}
 
 	quicConfig := &quic.Config{
-		CreatePaths: cfg.Multipath,
+		MaxPathID:      cfg.MaxPathID,
+		NotifyID:       cfg.NotifyID,
 		CacheHandshake: cfg.Cache,
 	}
 
@@ -40,25 +41,32 @@ func Run(cfg common.TrafficConfig) string {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	log.Printf("GET %s", cfg.Url)
-	var elapsedStr string
+	log.Printf("GET %s", cfg.URL)
+	var elapsedStr = "-1.0s"
 	go func(addr string) {
 		start := time.Now()
 		rsp, err := hclient.Get(addr)
 		if err != nil {
-			panic(err)
+			log.Printf("ERROR: %s", err)
+			wg.Done()
+			return
 		}
 
 		body := &bytes.Buffer{}
 		_, err = io.Copy(body, rsp.Body)
 		if err != nil {
-			panic(err)
+			log.Printf("ERROR: %s", err)
+			wg.Done()
+			return
 		}
 		elapsed := time.Since(start)
 		elapsedStr = fmt.Sprintf("%s", elapsed)
 		rsp.Body.Close()
+		if cfg.PrintBody {
+			log.Printf("%s", body)
+		}
 		wg.Done()
-	}(cfg.Url)
+	}(cfg.URL)
 	wg.Wait()
 
 	return elapsedStr
