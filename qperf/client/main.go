@@ -114,9 +114,10 @@ func iperfClient(maxTime time.Duration) error {
 			return nil
 		}
 		_, err := stream.Write([]byte(message))
-		if err != nil {
-			panic(err)
+		if err.Error() == "deadline exceeded" {
+			return nil
 		}
+		return err
 	}
 
 	return nil
