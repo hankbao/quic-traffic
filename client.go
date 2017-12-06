@@ -17,6 +17,7 @@ import (
 type RunConfig interface {
 	Cache() bool
 	LogFile() string
+	LogPeriodMs() int
 	MaxPathID() int
 	NotifyID() string
 	Output() string
@@ -45,7 +46,7 @@ func Run(runcfg RunConfig) string {
 		logFile = logFile[7:]
 	}
 
-	quic.SetLoggerParams(logFile, time.Duration(1000)*time.Millisecond)
+	quic.SetLoggerParams(logFile, time.Duration(runcfg.LogPeriodMs())*time.Millisecond)
 
 	var res string
 
