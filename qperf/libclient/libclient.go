@@ -67,10 +67,18 @@ func Run(cfg common.TrafficConfig) string {
 	return ret
 }
 
+func printIntervalLine(startTime time.Time, lastTotalSent quic.ByteCount, lastTotalRetrans quic.ByteCount) (quic.ByteCount, quic.ByteCount) {
+	elapsed := time.Since(startTime)
+	totalSent := stream.GetBytesSent()
+	totalRetrans := stream.GetBytesRetrans()
+	if elapsed != 0 {
+		ret += fmt.Sprintf("%d-%d %d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, totalSent-lastTotalSent, totalSent*1000000000/quic.ByteCount(time.Since(startTime)/time.Nanosecond), totalRetrans-lastTotalRetrans)
+	}
+	return totalSent, totalRetrans
+}
+
 func clientBandwidthTracker(startTime time.Time) {
-	var totalSent quic.ByteCount
 	var lastTotalSent quic.ByteCount
-	var totalRetrans quic.ByteCount
 	var lastTotalRetrans quic.ByteCount
 	ret += fmt.Sprintf("IntervalInSec TransferredLastSecond GlobalBandwidth RetransmittedLastSecond\n")
 	timer = utils.NewTimer()
@@ -78,19 +86,13 @@ func clientBandwidthTracker(startTime time.Time) {
 	for {
 		select {
 		case <-stopChan:
+			totalSent, totalRetrans := printIntervalLine(startTime, lastTotalSent, lastTotalRetrans)
 			ret += fmt.Sprintf("- - - - - - - - - - - - - - -\n")
 			ret += fmt.Sprintf("totalSent %d duration %s totalRetrans %d\n", totalSent, time.Since(startTime), totalRetrans)
 			return
 		case <-timer.Chan():
 			timer.SetRead()
-			elapsed := time.Since(startTime)
-			totalSent = stream.GetBytesSent()
-			totalRetrans = stream.GetBytesRetrans()
-			if elapsed != 0 {
-				ret += fmt.Sprintf("%d-%d %d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, totalSent-lastTotalSent, totalSent*1000000000/quic.ByteCount(time.Since(startTime)/time.Nanosecond), totalRetrans-lastTotalRetrans)
-			}
-			lastTotalSent = totalSent
-			lastTotalRetrans = totalRetrans
+			lastTotalSent, lastTotalRetrans = printIntervalLine(startTime, lastTotalSent, lastTotalRetrans)
 			timer.Reset(time.Now().Add(time.Second))
 			break
 		}
