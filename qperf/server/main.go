@@ -19,6 +19,7 @@ import (
 
 var (
 	addr     = "localhost:4242"
+	maxTime  = 15 * time.Second
 	print    bool
 	readChan chan int
 	stopChan chan struct{}
@@ -35,11 +36,13 @@ const (
 func main() {
 	addrF := flag.String("addr", "localhost:4242", "Address to dial (client) / to listen (server)")
 	printF := flag.Bool("p", false, "Set this flag to print details for connections")
+	timeF := flag.Duration("time", 15*time.Second, "Maximum time for tests")
 
 	flag.Parse()
 
 	addr = *addrF
 	print = *printF
+	maxTime = *timeF
 	iperfServer()
 }
 
@@ -85,7 +88,7 @@ func iperfServerHandleSession(sess quic.Session) {
 	readChan = make(chan int, 10)
 	stopChan = make(chan struct{})
 	buf := make([]byte, BufLen)
-	stream.SetDeadline(time.Now().Add(15 * time.Second))
+	stream.SetDeadline(time.Now().Add(maxTime))
 forLoop:
 	for {
 		read, err := io.ReadAtLeast(stream, buf, 1)

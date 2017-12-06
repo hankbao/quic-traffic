@@ -35,7 +35,7 @@ const (
 // then connect with a client, send the message, and wait for its receipt.
 func main() {
 	addrF := flag.String("addr", "localhost:4242", "Address to dial")
-	timeF := flag.Int("t", 10, "Time to run the experiment")
+	timeF := flag.Duration("t", 10*time.Second, "Time to run the experiment")
 	multipathF := flag.Bool("m", false, "multipath")
 
 	flag.Parse()
@@ -81,7 +81,7 @@ func clientBandwidthTracker(startTime time.Time) {
 	}
 }
 
-func iperfClient(timeSec int) error {
+func iperfClient(maxTime time.Duration) error {
 	var maxPathID uint8
 	if multipath {
 		maxPathID = 255
@@ -103,10 +103,11 @@ func iperfClient(timeSec int) error {
 	startTime := time.Now()
 	go clientBandwidthTracker(startTime)
 	stopChan = make(chan struct{})
+	stream.SetDeadline(time.Now().Add(maxTime))
 
 	for {
 		elapsed := time.Since(startTime)
-		if elapsed >= time.Duration(timeSec)*time.Second {
+		if elapsed >= maxTime {
 			stopChan <- struct{}{}
 			stream.Close()
 			time.Sleep(time.Second)

@@ -58,7 +58,7 @@ func Run(cfg common.TrafficConfig) string {
 	addr = cfg.URL
 	var err error
 
-	err = iperfClient(quicConfig, 10)
+	err = iperfClient(quicConfig, 10*time.Second)
 
 	if err != nil {
 		return err.Error()
@@ -97,7 +97,7 @@ func clientBandwidthTracker(startTime time.Time) {
 	}
 }
 
-func iperfClient(quicConfig *quic.Config, timeSec int) error {
+func iperfClient(quicConfig *quic.Config, maxTime time.Duration) error {
 	session, err := quic.DialAddr(addr, &tls.Config{InsecureSkipVerify: true}, quicConfig)
 	if err != nil {
 		return err
@@ -112,10 +112,11 @@ func iperfClient(quicConfig *quic.Config, timeSec int) error {
 	startTime := time.Now()
 	go clientBandwidthTracker(startTime)
 	stopChan = make(chan struct{})
+	stream.SetDeadline(time.Now().Add(maxTime))
 
 	for {
 		elapsed := time.Since(startTime)
-		if elapsed >= time.Duration(timeSec)*time.Second {
+		if elapsed >= maxTime {
 			stopChan <- struct{}{}
 			stream.Close()
 			time.Sleep(time.Second)
