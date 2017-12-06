@@ -119,13 +119,13 @@ func clientMain(cfg common.TrafficConfig) error {
 	// TODO: specify address
 	session, err := quic.DialAddr(addr, tlsConfig, cfgClient)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	fmt.Println("Connected")
 	startTime = time.Now()
 	stream, err = session.OpenStreamSync()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	go clientSender()
