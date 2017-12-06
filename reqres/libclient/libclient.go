@@ -37,7 +37,7 @@ var (
 	printChan   chan struct{}
 	querySize   = 750
 	resSize     = 750
-	runTime     = 30 * time.Second
+	runTime     = 14 * time.Second
 	sentTime    map[int]time.Time
 	startTime   time.Time
 	stream      quic.Stream
