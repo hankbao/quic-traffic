@@ -87,12 +87,12 @@ func sendMessage() error {
 }
 
 func clientSender() {
+	stream.SetDeadline(time.Now().Add(runTime))
 sendLoop:
 	for {
 		if stream == nil {
 			break sendLoop
 		}
-		time.Sleep(intervalTime)
 		if time.Since(startTime) >= runTime {
 			stream.Close()
 			break sendLoop
@@ -103,6 +103,7 @@ sendLoop:
 				break sendLoop
 			}
 		}
+		time.Sleep(intervalTime)
 	}
 }
 
