@@ -125,6 +125,9 @@ func iperfClient(quicConfig *quic.Config, maxTime time.Duration) error {
 		_, err := stream.Write([]byte(message))
 		if err != nil {
 			if err.Error() == "deadline exceeded" {
+				// Let the time to the test to end
+				stopChan <- struct{}{}
+				time.Sleep(time.Second)
 				return nil
 			}
 			return err
