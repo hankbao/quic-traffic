@@ -79,7 +79,8 @@ func serverBandwidthTracker() {
 func iperfServerHandleSession(sess quic.Session) {
 	stream, err := sess.AcceptStream()
 	if err != nil {
-		panic(err)
+		fmt.Printf("Got accept stream error: %v\n", err)
+		return
 	}
 	fmt.Println("Accept new connection from", sess.RemoteAddr())
 	if print {
@@ -119,10 +120,12 @@ func iperfServer() error {
 	for {
 		sess, err := listener.Accept()
 		if err != nil {
-			return err
+			fmt.Printf("Got accept error: %v\n", err)
+			continue
 		}
 		go iperfServerHandleSession(sess)
 	}
+	return err
 }
 
 // A wrapper for io.Writer that also logs the message.

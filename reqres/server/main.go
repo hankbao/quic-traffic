@@ -20,7 +20,7 @@ import (
 var addr = "localhost:4242"
 
 const (
-	MsgLen = 750
+	MsgLen    = 750
 	MinFields = 5
 )
 
@@ -32,7 +32,7 @@ func main() {
 	addr = *addrF
 	err := echoServer()
 	if err != nil {
-		panic(err)
+		fmt.Printf("Got main error: %v\n", err)
 	}
 }
 
@@ -45,7 +45,8 @@ func echoServer() error {
 	for {
 		sess, err := listener.Accept()
 		if err != nil {
-			return err
+			fmt.Printf("Got accept error: %v\n", err)
+			continue
 		}
 		go handleClient(sess)
 	}
@@ -56,7 +57,8 @@ func handleClient(sess quic.Session) {
 	fmt.Printf("Accept new connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
 	stream, err := sess.AcceptStream()
 	if err != nil {
-		panic(err)
+		fmt.Printf("Got accept stream error: %v\n", err)
+		return
 	}
 	buf := make([]byte, MsgLen)
 serveLoop:
@@ -80,7 +82,7 @@ serveLoop:
 		}
 		msgID := splitMsg[0]
 		resSize, _ := strconv.Atoi(splitMsg[2])
-		res := msgID + "&" + strings.Repeat("0", resSize - len(msgID) - 2) + "\n"
+		res := msgID + "&" + strings.Repeat("0", resSize-len(msgID)-2) + "\n"
 		_, err = stream.Write([]byte(res))
 		if err != nil {
 			stream.Close()

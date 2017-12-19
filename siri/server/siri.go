@@ -20,7 +20,7 @@ import (
 var addr = "localhost:4242"
 
 const (
-	MsgLen = 2500
+	MsgLen    = 2500
 	MinFields = 5
 )
 
@@ -32,7 +32,7 @@ func main() {
 	addr = *addrF
 	err := echoServer()
 	if err != nil {
-		panic(err)
+		fmt.Printf("Got main error: %v\n", err)
 	}
 }
 
@@ -60,7 +60,8 @@ func handleClient(sess quic.Session) {
 
 	stream, err := sess.AcceptStream()
 	if err != nil {
-		panic(err)
+		fmt.Printf("Got accept stream error: %v", err)
+		return
 	}
 	buf := make([]byte, MsgLen)
 
@@ -86,7 +87,7 @@ serverLoop:
 		}
 		msgID := splitMsg[0]
 		resSize, _ := strconv.Atoi(splitMsg[2])
-		res := msgID + "&" + strings.Repeat("0", resSize - len(msgID) - 2) + "\n"
+		res := msgID + "&" + strings.Repeat("0", resSize-len(msgID)-2) + "\n"
 		_, err = stream.Write([]byte(res))
 		if err != nil {
 			stream.Close()
