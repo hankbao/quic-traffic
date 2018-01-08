@@ -7,8 +7,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"flag"
-	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"time"
 
@@ -49,15 +49,15 @@ func main() {
 func serverBandwidthTracker() {
 	totalRead := 0
 	secRead := 0
-	fmt.Printf("IntervalInSec TransferredLastSecond GlobalBandwidth\n")
+	log.Printf("IntervalInSec TransferredLastSecond GlobalBandwidth\n")
 	startTime := time.Now()
 	timer = utils.NewTimer()
 	timer.Reset(startTime.Add(time.Second))
 	for {
 		select {
 		case <-stopChan:
-			fmt.Printf("- - - - - - - - - - - - - - -\n")
-			fmt.Printf("totalReceived %d duration %s\n", totalRead, time.Since(startTime))
+			log.Printf("- - - - - - - - - - - - - - -\n")
+			log.Printf("totalReceived %d duration %s\n", totalRead, time.Since(startTime))
 			return
 		case read := <-readChan:
 			totalRead += read
@@ -67,7 +67,7 @@ func serverBandwidthTracker() {
 			timer.SetRead()
 			elapsed := time.Since(startTime)
 			if elapsed != 0 {
-				fmt.Printf("%d-%d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, secRead, totalRead*1000000000/int(time.Since(startTime)/time.Nanosecond))
+				log.Printf("%d-%d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, secRead, totalRead*1000000000/int(time.Since(startTime)/time.Nanosecond))
 			}
 			secRead = 0
 			timer.Reset(time.Now().Add(time.Second))
@@ -79,10 +79,10 @@ func serverBandwidthTracker() {
 func iperfServerHandleSession(sess quic.Session) {
 	stream, err := sess.AcceptStream()
 	if err != nil {
-		fmt.Printf("Got accept stream error: %v\n", err)
+		log.Printf("Got accept stream error: %v\n", err)
 		return
 	}
-	fmt.Println("Accept new connection from", sess.RemoteAddr())
+	log.Println("Accept new connection from", sess.RemoteAddr())
 	if print {
 		go serverBandwidthTracker()
 	}
@@ -109,7 +109,7 @@ forLoop:
 			readChan <- read
 		}
 	}
-	fmt.Println("Connection terminated from", sess.RemoteAddr())
+	log.Println("Connection terminated from", sess.RemoteAddr())
 }
 
 func iperfServer() error {
@@ -120,7 +120,7 @@ func iperfServer() error {
 	for {
 		sess, err := listener.Accept()
 		if err != nil {
-			fmt.Printf("Got accept error: %v\n", err)
+			log.Printf("Got accept error: %v\n", err)
 			continue
 		}
 		go iperfServerHandleSession(sess)
@@ -132,7 +132,7 @@ func iperfServer() error {
 type loggingWriter struct{ io.Writer }
 
 func (w loggingWriter) Write(b []byte) (int, error) {
-	fmt.Printf("Server: Got '%s'\n", string(b))
+	log.Printf("Server: Got '%s'\n", string(b))
 	return w.Writer.Write(b)
 }
 

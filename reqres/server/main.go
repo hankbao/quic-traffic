@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"strconv"
 	"strings"
@@ -32,7 +33,7 @@ func main() {
 	addr = *addrF
 	err := echoServer()
 	if err != nil {
-		fmt.Printf("Got main error: %v\n", err)
+		log.Printf("Got main error: %v\n", err)
 	}
 }
 
@@ -45,7 +46,7 @@ func echoServer() error {
 	for {
 		sess, err := listener.Accept()
 		if err != nil {
-			fmt.Printf("Got accept error: %v\n", err)
+			log.Printf("Got accept error: %v\n", err)
 			continue
 		}
 		go handleClient(sess)
@@ -54,10 +55,10 @@ func echoServer() error {
 }
 
 func handleClient(sess quic.Session) {
-	fmt.Printf("Accept new connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
+	log.Printf("Accept new connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
 	stream, err := sess.AcceptStream()
 	if err != nil {
-		fmt.Printf("Got accept stream error: %v\n", err)
+		log.Printf("Got accept stream error: %v\n", err)
 		return
 	}
 	buf := make([]byte, MsgLen)
@@ -86,11 +87,11 @@ serveLoop:
 		_, err = stream.Write([]byte(res))
 		if err != nil {
 			stream.Close()
-			fmt.Printf("Got error: %v", err)
+			log.Printf("Got error: %v", err)
 			break serveLoop
 		}
 	}
-	fmt.Printf("Close connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
+	log.Printf("Close connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
 }
 
 // Setup a bare-bones TLS config for the server
