@@ -119,13 +119,18 @@ func progressWorker() {
 // over the uplink stream, the server over the downlink one.
 func Run(cfg common.TrafficConfig) string {
 	sh := &serverHandler{
-		addr:       cfg.URL,
-		buffer:     new(bytes.Buffer),
-		delaysDown: make([]time.Duration, 0),
-		delaysUp:   make([]time.Duration, 0),
-		printChan:  make(chan struct{}, 1),
-		runTime:    cfg.RunTime,
-		sentTime:   make(map[int]time.Time),
+		addr:               cfg.URL,
+		buffer:             new(bytes.Buffer),
+		delaysDown:         make([]time.Duration, 0),
+		delaysUp:           make([]time.Duration, 0),
+		printChan:          make(chan struct{}, 1),
+		runTime:            cfg.RunTime,
+		sentTime:           make(map[int]time.Time),
+		maxID:              maxIDCst,
+		intervalClientTime: intervalClientTimeCst,
+		intervalServerTime: intervalServerTimeCst,
+		chunkClientSize:    2000,
+		chunkServerSize:    2000,
 	}
 	sh.printChan <- struct{}{}
 	initProgressWorker()
