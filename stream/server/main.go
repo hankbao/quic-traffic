@@ -27,25 +27,43 @@ const (
 )
 
 var (
-	addr               = "localhost:4242"
-	chunkClientSize    = 2000
-	chunkServerSize    = 2000
+	addr = "localhost:4242"
+)
+
+type clientHandler struct {
+	id uint64
+
+	addr               string
+	chunkClientSize    int
+	chunkServerSize    int
 	delays             []time.Duration
 	delaysLock         sync.Mutex
-	intervalServerTime = 100 * time.Millisecond
-	maxID              = 10000
-	nxtAckMsgID        = 1
+	intervalServerTime time.Duration
+	maxID              int
+	nxtAckMsgID        int
 	nxtMessageID       int
-	runTime            = 30 * time.Second
+	runTime            time.Duration
 	sentTime           map[int]time.Time
+	sess               quic.Session
 	startTime          time.Time
 	streamDown         quic.Stream
 	streamUp           quic.Stream
-)
+}
 
 func myLogPrintf(id uint64, format string, v ...interface{}) {
 	s := fmt.Sprintf("%x: ", id)
 	log.Printf(s+format, v...)
+}
+
+func newClientHandler(sess quic.Session) *clientHandler {
+	ch := &clientHandler{
+		id:          uint64(mrand.Int63()),
+		sess:        sess,
+		nxtAckMsgID: 1,
+	}
+	ch.delays = make([]time.Duration, 0)
+	ch.sentTime = make(map[int]time.Time)
+	return ch
 }
 
 // We start a server echoing data on the first stream the client opens,
@@ -54,8 +72,6 @@ func main() {
 	addrF := flag.String("addr", "localhost:4242", "Address to bind")
 	flag.Parse()
 	addr = *addrF
-	delays = make([]time.Duration, 0)
-	sentTime = make(map[int]time.Time)
 	err := streamServer()
 	if err != nil {
 		log.Printf("Got main error: %v\n", err)
@@ -75,90 +91,91 @@ func streamServer() error {
 			log.Printf("Got accept error: %v\n", err)
 			continue
 		}
-		go handleClient(sess, uint64(mrand.Int63()))
+		ch := newClientHandler(sess)
+		go ch.handle()
 	}
 	return err
 }
 
-func sendInitialAck() error {
-	if streamDown == nil {
+func (ch *clientHandler) sendInitialAck() error {
+	if ch.streamDown == nil {
 		return errors.New("Closed down stream")
 	}
-	_, err := streamDown.Write([]byte("A&0"))
+	_, err := ch.streamDown.Write([]byte("A&0"))
 	return err
 }
 
-func sendAck(msgID int) error {
-	if streamUp == nil {
+func (ch *clientHandler) sendAck(msgID int) error {
+	if ch.streamUp == nil {
 		return errors.New("Closed down stream")
 	}
 	msg := "A&" + strconv.Itoa(msgID+1)
-	_, err := streamUp.Write([]byte(msg))
+	_, err := ch.streamUp.Write([]byte(msg))
 	return err
 }
 
-func sendData() error {
-	if streamDown == nil {
+func (ch *clientHandler) sendData() error {
+	if ch.streamDown == nil {
 		return errors.New("Closed down stream")
 	}
-	delaysLock.Lock()
-	startString := "D&" + strconv.Itoa(nxtMessageID) + "&" + strconv.Itoa(chunkClientSize) + "&"
+	ch.delaysLock.Lock()
+	startString := "D&" + strconv.Itoa(ch.nxtMessageID) + "&" + strconv.Itoa(ch.chunkClientSize) + "&"
 	delaysStr := ""
-	for _, d := range delays {
+	for _, d := range ch.delays {
 		delaysStr += strconv.FormatInt(int64(d), 10) + "&"
 	}
-	delays = delays[:0]
-	delaysLock.Unlock()
-	msg := startString + delaysStr + strings.Repeat("0", chunkClientSize-len(startString)-len(delaysStr))
-	sentTime[nxtMessageID] = time.Now()
-	_, err := streamDown.Write([]byte(msg))
-	nxtMessageID = (nxtMessageID + 1) % maxID
+	ch.delays = ch.delays[:0]
+	ch.delaysLock.Unlock()
+	msg := startString + delaysStr + strings.Repeat("0", ch.chunkClientSize-len(startString)-len(delaysStr))
+	ch.sentTime[ch.nxtMessageID] = time.Now()
+	_, err := ch.streamDown.Write([]byte(msg))
+	ch.nxtMessageID = (ch.nxtMessageID + 1) % ch.maxID
 	return err
 }
 
-func parseFormatStartPacket(id uint64, splitMsg []string) bool {
+func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 	var err error
 	//S&{maxID}&{runTime}&{chunkClientSize}&{chunkServerSize}&{intervalServerTime}
 	if len(splitMsg) != 6 {
-		myLogPrintf(id, "Invalid size: %d", len(splitMsg))
+		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
 		return false
 	}
 	if splitMsg[0] != "S" {
-		myLogPrintf(id, "Invalid prefix: %s", splitMsg[0])
+		myLogPrintf(ch.id, "Invalid prefix: %s", splitMsg[0])
 		return false
 	}
-	maxID, err = strconv.Atoi(splitMsg[1])
-	if err != nil || maxID <= 0 {
-		myLogPrintf(id, "Invalid maxID: %s", splitMsg[1])
+	ch.maxID, err = strconv.Atoi(splitMsg[1])
+	if err != nil || ch.maxID <= 0 {
+		myLogPrintf(ch.id, "Invalid maxID: %s", splitMsg[1])
 		return false
 	}
 	runTimeInt, err := strconv.ParseInt(splitMsg[2], 10, 64)
 	if err != nil || runTimeInt < 0 {
-		myLogPrintf(id, "Invalid runTime: %s", splitMsg[2])
+		myLogPrintf(ch.id, "Invalid runTime: %s", splitMsg[2])
 		return false
 	}
-	runTime = time.Duration(runTimeInt)
-	chunkClientSize, err = strconv.Atoi(splitMsg[3])
-	if err != nil || chunkClientSize < MinChunkSize {
-		myLogPrintf(id, "Invalid chunkClientSize: %s", splitMsg[3])
+	ch.runTime = time.Duration(runTimeInt)
+	ch.chunkClientSize, err = strconv.Atoi(splitMsg[3])
+	if err != nil || ch.chunkClientSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid chunkClientSize: %s", splitMsg[3])
 		return false
 	}
-	chunkServerSize, err = strconv.Atoi(splitMsg[4])
-	if err != nil || chunkServerSize < MinChunkSize {
-		myLogPrintf(id, "Invalid chunkServerSize: %s", splitMsg[4])
+	ch.chunkServerSize, err = strconv.Atoi(splitMsg[4])
+	if err != nil || ch.chunkServerSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid chunkServerSize: %s", splitMsg[4])
 		return false
 	}
 	intervalServerTimeInt, err := strconv.ParseInt(splitMsg[5], 10, 64)
 	if err != nil || intervalServerTimeInt <= 0 {
-		myLogPrintf(id, "Invalid intervalServerTime: %s with error: %v", splitMsg[5], err)
+		myLogPrintf(ch.id, "Invalid intervalServerTime: %s with error: %v", splitMsg[5], err)
 		return false
 	}
-	intervalServerTime = time.Duration(intervalServerTimeInt)
+	ch.intervalServerTime = time.Duration(intervalServerTimeInt)
 
 	return true
 }
 
-func checkFormatClientData(msg string, splitMsg []string) bool {
+func (ch *clientHandler) checkFormatClientData(msg string, splitMsg []string) bool {
 	// D&{ID}&{SIZE}&{padding}
 	if len(splitMsg) < 4 {
 		return false
@@ -167,169 +184,171 @@ func checkFormatClientData(msg string, splitMsg []string) bool {
 		return false
 	}
 	msgID, err := strconv.Atoi(splitMsg[1])
-	if err != nil || msgID < 0 || msgID >= maxID {
+	if err != nil || msgID < 0 || msgID >= ch.maxID {
 		return false
 	}
 	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != chunkClientSize {
+	if err != nil || size != ch.chunkClientSize {
 		return false
 	}
 
 	return true
 }
 
-func serverSenderDown() {
-	if runTime > 0 {
-		streamDown.SetDeadline(time.Now().Add(runTime))
+func (ch *clientHandler) serverSenderDown() {
+	if ch.runTime > 0 {
+		ch.streamDown.SetDeadline(time.Now().Add(ch.runTime))
 	}
 sendLoop:
 	for {
-		if streamDown == nil {
+		if ch.streamDown == nil {
 			break sendLoop
 		}
-		if time.Since(startTime) >= runTime {
-			streamUp.Close()
+		if time.Since(ch.startTime) >= ch.runTime {
+			ch.streamUp.Close()
 			break sendLoop
 		} else {
-			err := sendData()
+			err := ch.sendData()
 			if err != nil {
-				streamUp.Close()
+				ch.streamUp.Close()
 				break sendLoop
 			}
 		}
-		time.Sleep(intervalServerTime)
+		time.Sleep(ch.intervalServerTime)
 	}
 }
 
-func checkFormatClientAck(id uint64, splitMsg []string) bool {
+func (ch *clientHandler) checkFormatClientAck(splitMsg []string) bool {
 	if len(splitMsg) != 2 {
-		myLogPrintf(id, "Wrong size: %d", len(splitMsg))
+		myLogPrintf(ch.id, "Wrong size: %d", len(splitMsg))
 		return false
 	}
 	if splitMsg[0] != "A" {
-		myLogPrintf(id, "Wrong prefix: %s", splitMsg[0])
+		myLogPrintf(ch.id, "Wrong prefix: %s", splitMsg[0])
 		return false
 	}
 	ackMsgID, err := strconv.Atoi(splitMsg[1])
-	if err != nil || ackMsgID != nxtAckMsgID {
-		myLogPrintf(id, "Wrong ackMsgID: %s, expected %d", splitMsg[1], nxtAckMsgID)
+	if err != nil || ackMsgID != ch.nxtAckMsgID {
+		myLogPrintf(ch.id, "Wrong ackMsgID: %s, expected %d", splitMsg[1], ch.nxtAckMsgID)
 		return false
 	}
 
 	return true
 }
 
-func serverReceiverDown(id uint64) {
+func (ch *clientHandler) serverReceiverDown() {
 	buf := make([]byte, InitialBufLen)
 listenLoop:
 	for {
-		if streamDown == nil {
-			myLogPrintf(id, "Closed down stream\n")
+		if ch.streamDown == nil {
+			myLogPrintf(ch.id, "Closed down stream\n")
 			break listenLoop
 		}
-		read, err := io.ReadAtLeast(streamDown, buf, 3)
+		read, err := io.ReadAtLeast(ch.streamDown, buf, 3)
 		rcvTime := time.Now()
 		if err != nil {
-			myLogPrintf(id, "Error when reading acks in down stream: %v\n", err)
+			myLogPrintf(ch.id, "Error when reading acks in down stream: %v\n", err)
+			ch.streamDown.Close()
 			break listenLoop
 		}
 		msg := string(buf[:read])
 		splitMsg := strings.Split(msg, "&")
-		if !checkFormatClientAck(id, splitMsg) {
-			myLogPrintf(id, "Error with ack format from client in down\n")
+		if !ch.checkFormatClientAck(splitMsg) {
+			myLogPrintf(ch.id, "Error with ack format from client in down\n")
+			ch.streamDown.Close()
 			break listenLoop
 		}
 		ackMsgID, _ := strconv.Atoi(splitMsg[1])
 		ackedMsgID := ackMsgID - 1
-		sent, ok := sentTime[ackMsgID-1]
+		sent, ok := ch.sentTime[ackMsgID-1]
 		if !ok {
 			continue
 		}
-		delaysLock.Lock()
-		delays = append(delays, rcvTime.Sub(sent))
-		delaysLock.Unlock()
-		delete(sentTime, ackedMsgID)
-		nxtAckMsgID++
+		ch.delaysLock.Lock()
+		ch.delays = append(ch.delays, rcvTime.Sub(sent))
+		ch.delaysLock.Unlock()
+		delete(ch.sentTime, ackedMsgID)
+		ch.nxtAckMsgID++
 	}
 }
 
-func handleClient(sess quic.Session, id uint64) {
+func (ch *clientHandler) handle() {
 	var err error
-	myLogPrintf(id, "Accept new connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
-	streamDown, err = sess.AcceptStream()
+	myLogPrintf(ch.id, "Accept new connection on %v from %v\n", ch.sess.LocalAddr(), ch.sess.RemoteAddr())
+	ch.streamDown, err = ch.sess.AcceptStream()
 	if err != nil {
-		myLogPrintf(id, "Got accept down stream error: %v\n", err)
+		myLogPrintf(ch.id, "Got accept down stream error: %v\n", err)
 		return
 	}
 
 	buf := make([]byte, InitialBufLen)
 	// FIXME timeout
-	read, err := io.ReadAtLeast(streamDown, buf, 11)
+	read, err := io.ReadAtLeast(ch.streamDown, buf, 11)
 	if err != nil {
-		myLogPrintf(id, "Read error when starting: %v\n", err)
-		streamDown.Close()
+		myLogPrintf(ch.id, "Read error when starting: %v\n", err)
+		ch.streamDown.Close()
 		return
 	}
 	msg := string(buf[:read])
 	splitMsg := strings.Split(msg, "&")
 	// First collect the parameters of the stream traffic
-	if !parseFormatStartPacket(id, splitMsg) {
-		myLogPrintf(id, "Invalid format for start packet\n")
-		streamDown.Close()
+	if !ch.parseFormatStartPacket(splitMsg) {
+		myLogPrintf(ch.id, "Invalid format for start packet\n")
+		ch.streamDown.Close()
 		return
 	}
 
-	myLogPrintf(id, "Start packet ok, %d %s %d %d %s\n", maxID, runTime, chunkClientSize, chunkServerSize, intervalServerTime)
-	if sendInitialAck() != nil {
-		myLogPrintf(id, "Error when sending initial ack on down stream\n")
-		streamDown.Close()
+	myLogPrintf(ch.id, "Start packet ok, %d %s %d %d %s\n", ch.maxID, ch.runTime, ch.chunkClientSize, ch.chunkServerSize, ch.intervalServerTime)
+	if ch.sendInitialAck() != nil {
+		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
+		ch.streamDown.Close()
 		return
 	}
 
-	streamUp, err = sess.AcceptStream()
+	ch.streamUp, err = ch.sess.AcceptStream()
 	if err != nil {
-		myLogPrintf(id, "Got accept up stream error: %v\n", err)
-		streamDown.Close()
+		myLogPrintf(ch.id, "Got accept up stream error: %v\n", err)
+		ch.streamDown.Close()
 		return
 	}
 
-	startTime = time.Now()
-	go serverSenderDown()
-	go serverReceiverDown(id)
+	ch.startTime = time.Now()
+	go ch.serverSenderDown()
+	go ch.serverReceiverDown()
 
-	if runTime > 0 {
-		streamUp.SetDeadline(time.Now().Add(runTime))
+	if ch.runTime > 0 {
+		ch.streamUp.SetDeadline(time.Now().Add(ch.runTime))
 	}
-	buf = make([]byte, chunkClientSize)
+	buf = make([]byte, ch.chunkClientSize)
 
 serveLoop:
 	for {
-		read, err := io.ReadFull(streamUp, buf)
+		read, err := io.ReadFull(ch.streamUp, buf)
 		if err != nil {
-			myLogPrintf(id, "Error when reading up stream: %v\n", err)
-			streamUp.Close()
+			myLogPrintf(ch.id, "Error when reading up stream: %v\n", err)
+			ch.streamUp.Close()
 			break serveLoop
 		}
-		if read != chunkClientSize {
-			myLogPrintf(id, "Did not read the expected size on up stream; %d != %d\n", read, chunkClientSize)
-			streamUp.Close()
+		if read != ch.chunkClientSize {
+			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.chunkClientSize)
+			ch.streamUp.Close()
 			break serveLoop
 		}
 		msg := string(buf)
 		splitMsg := strings.Split(msg, "&")
-		if !checkFormatClientData(msg, splitMsg) {
-			myLogPrintf(id, "Unexpected format of data packet from client")
-			streamUp.Close()
+		if !ch.checkFormatClientData(msg, splitMsg) {
+			myLogPrintf(ch.id, "Unexpected format of data packet from client")
+			ch.streamUp.Close()
 			break serveLoop
 		}
 		msgID, _ := strconv.Atoi(splitMsg[1])
-		if err = sendAck(msgID); err != nil {
-			myLogPrintf(id, "Encountered error when sending ACK on up stream: %v\n")
-			streamUp.Close()
+		if err = ch.sendAck(msgID); err != nil {
+			myLogPrintf(ch.id, "Encountered error when sending ACK on up stream: %v\n")
+			ch.streamUp.Close()
 			break serveLoop
 		}
 	}
-	myLogPrintf(id, "Close connection on %v from %v\n", sess.LocalAddr(), sess.RemoteAddr())
+	myLogPrintf(ch.id, "Close connection on %v from %v\n", ch.sess.LocalAddr(), ch.sess.RemoteAddr())
 }
 
 // Setup a bare-bones TLS config for the server
