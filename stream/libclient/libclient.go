@@ -73,6 +73,7 @@ var (
 	newUp         chan tsDelay
 	request       chan struct{}
 	response      chan string
+	closed        chan struct{}
 )
 
 func GetProgressResults() string {
@@ -87,27 +88,33 @@ func initProgressWorker() {
 	newUp = make(chan tsDelay, 5)
 	request = make(chan struct{})
 	response = make(chan string)
+	closed = make(chan struct{})
 }
 
 func progressWorker() {
-	select {
-	case d := <-newDown:
-		newDelaysDown = append(newDelaysDown, d)
-	case u := <-newUp:
-		newDelaysUp = append(newDelaysUp, u)
-	case <-request:
-		buf := new(bytes.Buffer)
-		buf.WriteString(fmt.Sprintf("Up: %d\n", len(newDelaysUp)))
-		for _, d := range newDelaysUp {
-			buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
+workerLoop:
+	for {
+		select {
+		case d := <-newDown:
+			newDelaysDown = append(newDelaysDown, d)
+		case u := <-newUp:
+			newDelaysUp = append(newDelaysUp, u)
+		case <-request:
+			buf := new(bytes.Buffer)
+			buf.WriteString(fmt.Sprintf("Up: %d\n", len(newDelaysUp)))
+			for _, d := range newDelaysUp {
+				buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
+			}
+			buf.WriteString(fmt.Sprintf("Down: %d\n", len(newDelaysDown)))
+			for _, d := range newDelaysDown {
+				buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
+			}
+			newDelaysUp = newDelaysUp[:0]
+			newDelaysDown = newDelaysDown[:0]
+			response <- buf.String()
+		case <-closed:
+			break workerLoop
 		}
-		buf.WriteString(fmt.Sprintf("Down: %d\n", len(newDelaysDown)))
-		for _, d := range newDelaysDown {
-			buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
-		}
-		newDelaysUp = newDelaysUp[:0]
-		newDelaysDown = newDelaysDown[:0]
-		response <- buf.String()
 	}
 }
 
@@ -137,6 +144,7 @@ func Run(cfg common.TrafficConfig) string {
 	go progressWorker()
 	err := sh.handle(cfg)
 	sh.buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
+	close(closed)
 	return sh.printer()
 }
 
