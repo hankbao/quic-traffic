@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -271,6 +272,9 @@ func clientMain(cfg common.TrafficConfig) error {
 	startTime = time.Now()
 	go clientSenderUp()
 	go clientReceiverUp()
+
+	rand.Seed(time.Now().UTC().UnixNano())
+	time.Sleep(time.Duration(rand.Int()%10000) * time.Microsecond)
 
 	if runTime > 0 {
 		streamDown.SetDeadline(time.Now().Add(runTime))
