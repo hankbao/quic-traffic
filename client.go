@@ -79,3 +79,8 @@ func NotifyReachability(notifyID string) {
 		callback.Notify()
 	}
 }
+
+// GetStreamProgressResult gets ongoing stream delays
+func GetStreamProgressResult() string {
+	return stream.GetProgressResults()
+}

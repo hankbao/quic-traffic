@@ -55,6 +55,60 @@ var (
 	streamUp        quic.Stream
 )
 
+// Specific to in-progress results
+type tsDelay struct {
+	ts    time.Time
+	delay time.Duration
+}
+
+var (
+	newDelaysDown []tsDelay
+	newDelaysUp   []tsDelay
+	newDelaysLock sync.RWMutex
+	newDown       chan tsDelay
+	newUp         chan tsDelay
+	request       chan struct{}
+	response      chan string
+)
+
+func GetProgressResults() string {
+	request <- struct{}{}
+	return <-response
+}
+
+func initProgressWorker() {
+	newDelaysDown = make([]tsDelay, 0)
+	newDelaysUp = make([]tsDelay, 0)
+	newDown = make(chan tsDelay, 5)
+	newUp = make(chan tsDelay, 5)
+	request = make(chan struct{})
+	response = make(chan string)
+}
+
+func progressWorker() {
+	select {
+	case d := <-newDown:
+		newDelaysDown = append(newDelaysDown, d)
+	case u := <-newUp:
+		newDelaysUp = append(newDelaysUp, u)
+	case <-request:
+		buf := new(bytes.Buffer)
+		buf.WriteString(fmt.Sprintf("Up: %d\n", len(newDelaysUp)))
+		for _, d := range newDelaysUp {
+			buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
+		}
+		buf.WriteString(fmt.Sprintf("Down: %d\n", len(newDelaysDown)))
+		for _, d := range newDelaysDown {
+			buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
+		}
+		newDelaysUp = newDelaysUp[:0]
+		newDelaysDown = newDelaysDown[:0]
+		response <- buf.String()
+	}
+}
+
+// End of in-progress results
+
 // Run starts a client that opens two streams, a uplink and a downlink streams.
 // It first negotiates the parameters on the downlink stream, then both hosts
 // start to send packets at a regular rate in a streaming fashion, the client
@@ -68,6 +122,8 @@ func Run(cfg common.TrafficConfig) string {
 	addr = cfg.URL
 	runTime = cfg.RunTime
 	printChan <- struct{}{}
+	initProgressWorker()
+	go progressWorker()
 	err := clientMain(cfg)
 	buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
 	return printer()
@@ -84,11 +140,11 @@ func printer() string {
 	<-printChan
 	delaysLock.Lock()
 	counterLock.Lock()
-	buffer.WriteString(fmt.Sprintf("Count Up: %d\n", counterUp))
+	buffer.WriteString(fmt.Sprintf("Up: %d\n", counterUp))
 	for _, d := range delaysUp {
 		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Microsecond)))
 	}
-	buffer.WriteString(fmt.Sprintf("Count Down: %d\n", counterDown))
+	buffer.WriteString(fmt.Sprintf("Down: %d\n", counterDown))
 	for _, d := range delaysDown {
 		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Microsecond)))
 	}
@@ -196,6 +252,7 @@ listenLoop:
 		}
 		delaysLock.Lock()
 		delaysUp = append(delaysUp, rcvTime.Sub(sent))
+		newUp <- tsDelay{ts: rcvTime, delay: rcvTime.Sub(sent)}
 		delaysLock.Unlock()
 		delete(sentTime, ackedMsgID)
 		nxtAckMsgID++
@@ -312,6 +369,7 @@ listenLoop:
 				return errors.New("Unparseable delay from server")
 			}
 			delaysDown = append(delaysDown, time.Duration(durInt))
+			newDown <- tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
 		}
 		delaysLock.Unlock()
 		counterLock.Lock()
