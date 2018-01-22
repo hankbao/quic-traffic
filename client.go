@@ -11,6 +11,7 @@ import (
 	qperf "bitbucket.org/qdeconinck/quic-traffic/qperf/libclient"
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
+	stream "bitbucket.org/qdeconinck/quic-traffic/stream/libclient"
 )
 
 // RunConfig provides needed configuration
@@ -59,6 +60,8 @@ func Run(runcfg RunConfig) string {
 		res = reqres.Run(cfg)
 	case "siri":
 		res = siri.Run(cfg)
+	case "stream":
+		res = stream.Run(cfg)
 	default:
 		res = "Unknown traffic"
 	}
