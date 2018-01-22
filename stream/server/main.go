@@ -231,12 +231,14 @@ listenLoop:
 		rcvTime := time.Now()
 		if err != nil {
 			myLogPrintf(id, "Error when reading acks in down stream: %v\n", err)
+			streamDown.Close()
 			break listenLoop
 		}
 		msg := string(buf[:read])
 		splitMsg := strings.Split(msg, "&")
 		if !checkFormatClientAck(id, splitMsg) {
 			myLogPrintf(id, "Error with ack format from client in down\n")
+			streamDown.Close()
 			break listenLoop
 		}
 		ackMsgID, _ := strconv.Atoi(splitMsg[1])
