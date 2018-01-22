@@ -23,6 +23,7 @@ type RunConfig interface {
 	NotifyID() string
 	Output() string
 	PrintBody() bool
+	RunTime() int // in seconds
 	Traffic() string
 	URL() string
 }
@@ -40,7 +41,7 @@ func Run(runcfg RunConfig) string {
 		Output:    output,
 		PrintBody: runcfg.PrintBody(),
 		URL:       runcfg.URL(),
-		RunTime:   30 * time.Second,
+		RunTime:   time.Duration(runcfg.RunTime()) * time.Second,
 	}
 	logFile := runcfg.LogFile()
 	if strings.HasPrefix(logFile, "file://") {
