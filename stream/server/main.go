@@ -104,7 +104,7 @@ func sendData() error {
 	delaysLock.Lock()
 	startString := "D&" + strconv.Itoa(nxtMessageID) + "&" + strconv.Itoa(chunkClientSize) + "&"
 	delaysStr := ""
-	for d := range delays {
+	for _, d := range delays {
 		delaysStr += strconv.FormatInt(int64(d), 10) + "&"
 	}
 	delays = delays[:0]

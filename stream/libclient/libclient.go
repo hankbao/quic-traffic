@@ -85,11 +85,11 @@ func printer() string {
 	counterLock.Lock()
 	buffer.WriteString(fmt.Sprintf("Count Up: %d\n", counterUp))
 	for _, d := range delaysUp {
-		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Millisecond)))
+		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Microsecond)))
 	}
 	buffer.WriteString(fmt.Sprintf("Count Down: %d\n", counterDown))
 	for _, d := range delaysDown {
-		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Millisecond)))
+		buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Microsecond)))
 	}
 	counterLock.Unlock()
 	delaysLock.Unlock()
