@@ -33,6 +33,7 @@ var (
 type clientHandler struct {
 	id uint64
 
+	ackSize            int
 	addr               string
 	chunkClientSize    int
 	chunkServerSize    int
@@ -109,7 +110,8 @@ func (ch *clientHandler) sendAck(msgID int) error {
 	if ch.streamUp == nil {
 		return errors.New("Closed up stream")
 	}
-	msg := "A&" + strconv.Itoa(msgID+1)
+	msgIDStr := strconv.Itoa(msgID + 1)
+	msg := "A&" + strings.Repeat("0", ch.ackSize-2-len(msgIDStr)) + msgIDStr
 	_, err := ch.streamUp.Write([]byte(msg))
 	return err
 }
@@ -136,7 +138,7 @@ func (ch *clientHandler) sendData() error {
 func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 	var err error
 	//S&{maxID}&{runTime}&{chunkClientSize}&{chunkServerSize}&{intervalServerTime}
-	if len(splitMsg) != 6 {
+	if len(splitMsg) != 7 {
 		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
 		return false
 	}
@@ -149,23 +151,28 @@ func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 		myLogPrintf(ch.id, "Invalid maxID: %s", splitMsg[1])
 		return false
 	}
-	runTimeInt, err := strconv.ParseInt(splitMsg[2], 10, 64)
+	ch.ackSize, err = strconv.Atoi(splitMsg[2])
+	if err != nil || ch.ackSize != len(strconv.Itoa(ch.maxID-1))+2 {
+		myLogPrintf(ch.id, "Invalid ackSize: %s", splitMsg[2])
+		return false
+	}
+	runTimeInt, err := strconv.ParseInt(splitMsg[3], 10, 64)
 	if err != nil || runTimeInt < 0 {
 		myLogPrintf(ch.id, "Invalid runTime: %s", splitMsg[2])
 		return false
 	}
 	ch.runTime = time.Duration(runTimeInt)
-	ch.chunkClientSize, err = strconv.Atoi(splitMsg[3])
+	ch.chunkClientSize, err = strconv.Atoi(splitMsg[4])
 	if err != nil || ch.chunkClientSize < MinChunkSize {
 		myLogPrintf(ch.id, "Invalid chunkClientSize: %s", splitMsg[3])
 		return false
 	}
-	ch.chunkServerSize, err = strconv.Atoi(splitMsg[4])
+	ch.chunkServerSize, err = strconv.Atoi(splitMsg[5])
 	if err != nil || ch.chunkServerSize < MinChunkSize {
 		myLogPrintf(ch.id, "Invalid chunkServerSize: %s", splitMsg[4])
 		return false
 	}
-	intervalServerTimeInt, err := strconv.ParseInt(splitMsg[5], 10, 64)
+	intervalServerTimeInt, err := strconv.ParseInt(splitMsg[6], 10, 64)
 	if err != nil || intervalServerTimeInt <= 0 {
 		myLogPrintf(ch.id, "Invalid intervalServerTime: %s with error: %v", splitMsg[5], err)
 		return false
@@ -238,7 +245,7 @@ func (ch *clientHandler) checkFormatClientAck(splitMsg []string) bool {
 }
 
 func (ch *clientHandler) serverReceiverDown() {
-	buf := make([]byte, InitialBufLen)
+	buf := make([]byte, ch.ackSize)
 listenLoop:
 	for {
 		if ch.streamDown == nil {
@@ -246,7 +253,7 @@ listenLoop:
 			ch.sess.Close(errors.New("Closed down stream"))
 			break listenLoop
 		}
-		read, err := io.ReadAtLeast(ch.streamDown, buf, 3)
+		read, err := io.ReadFull(ch.streamDown, buf)
 		rcvTime := time.Now()
 		if err != nil {
 			myLogPrintf(ch.id, "Error when reading acks in down stream: %v\n", err)
@@ -301,7 +308,7 @@ func (ch *clientHandler) handle() {
 		return
 	}
 
-	myLogPrintf(ch.id, "Start packet ok, %d %s %d %d %s\n", ch.maxID, ch.runTime, ch.chunkClientSize, ch.chunkServerSize, ch.intervalServerTime)
+	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.chunkClientSize, ch.chunkServerSize, ch.intervalServerTime)
 	if ch.sendInitialAck() != nil {
 		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
 		ch.sess.Close(errors.New("Error when sending initial ack on down stream"))
