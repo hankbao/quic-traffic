@@ -107,7 +107,7 @@ func (ch *clientHandler) sendInitialAck() error {
 
 func (ch *clientHandler) sendAck(msgID int) error {
 	if ch.streamUp == nil {
-		return errors.New("Closed down stream")
+		return errors.New("Closed up stream")
 	}
 	msg := "A&" + strconv.Itoa(msgID+1)
 	_, err := ch.streamUp.Write([]byte(msg))
@@ -202,15 +202,16 @@ func (ch *clientHandler) serverSenderDown() {
 sendLoop:
 	for {
 		if ch.streamDown == nil {
+			ch.sess.Close(errors.New("Closed down stream"))
 			break sendLoop
 		}
 		if time.Since(ch.startTime) >= ch.runTime {
-			ch.streamUp.Close()
+			ch.sess.Close(nil)
 			break sendLoop
 		} else {
 			err := ch.sendData()
 			if err != nil {
-				ch.streamUp.Close()
+				ch.sess.Close(err)
 				break sendLoop
 			}
 		}
@@ -242,20 +243,21 @@ listenLoop:
 	for {
 		if ch.streamDown == nil {
 			myLogPrintf(ch.id, "Closed down stream\n")
+			ch.sess.Close(errors.New("Closed down stream"))
 			break listenLoop
 		}
 		read, err := io.ReadAtLeast(ch.streamDown, buf, 3)
 		rcvTime := time.Now()
 		if err != nil {
 			myLogPrintf(ch.id, "Error when reading acks in down stream: %v\n", err)
-			ch.streamDown.Close()
+			ch.sess.Close(err)
 			break listenLoop
 		}
 		msg := string(buf[:read])
 		splitMsg := strings.Split(msg, "&")
 		if !ch.checkFormatClientAck(splitMsg) {
 			myLogPrintf(ch.id, "Error with ack format from client in down\n")
-			ch.streamDown.Close()
+			ch.sess.Close(errors.New("Error with ack format from client in down"))
 			break listenLoop
 		}
 		ackMsgID, _ := strconv.Atoi(splitMsg[1])
@@ -278,6 +280,7 @@ func (ch *clientHandler) handle() {
 	ch.streamDown, err = ch.sess.AcceptStream()
 	if err != nil {
 		myLogPrintf(ch.id, "Got accept down stream error: %v\n", err)
+		ch.sess.Close(err)
 		return
 	}
 
@@ -286,7 +289,7 @@ func (ch *clientHandler) handle() {
 	read, err := io.ReadAtLeast(ch.streamDown, buf, 11)
 	if err != nil {
 		myLogPrintf(ch.id, "Read error when starting: %v\n", err)
-		ch.streamDown.Close()
+		ch.sess.Close(err)
 		return
 	}
 	msg := string(buf[:read])
@@ -294,21 +297,21 @@ func (ch *clientHandler) handle() {
 	// First collect the parameters of the stream traffic
 	if !ch.parseFormatStartPacket(splitMsg) {
 		myLogPrintf(ch.id, "Invalid format for start packet\n")
-		ch.streamDown.Close()
+		ch.sess.Close(errors.New("Invalid format for start packet"))
 		return
 	}
 
 	myLogPrintf(ch.id, "Start packet ok, %d %s %d %d %s\n", ch.maxID, ch.runTime, ch.chunkClientSize, ch.chunkServerSize, ch.intervalServerTime)
 	if ch.sendInitialAck() != nil {
 		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
-		ch.streamDown.Close()
+		ch.sess.Close(errors.New("Error when sending initial ack on down stream"))
 		return
 	}
 
 	ch.streamUp, err = ch.sess.AcceptStream()
 	if err != nil {
 		myLogPrintf(ch.id, "Got accept up stream error: %v\n", err)
-		ch.streamDown.Close()
+		ch.sess.Close(err)
 		return
 	}
 
@@ -326,25 +329,25 @@ serveLoop:
 		read, err := io.ReadFull(ch.streamUp, buf)
 		if err != nil {
 			myLogPrintf(ch.id, "Error when reading up stream: %v\n", err)
-			ch.streamUp.Close()
+			ch.sess.Close(err)
 			break serveLoop
 		}
 		if read != ch.chunkClientSize {
 			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.chunkClientSize)
-			ch.streamUp.Close()
+			ch.sess.Close(errors.New("Did not read the expected size on up stream"))
 			break serveLoop
 		}
 		msg := string(buf)
 		splitMsg := strings.Split(msg, "&")
 		if !ch.checkFormatClientData(msg, splitMsg) {
 			myLogPrintf(ch.id, "Unexpected format of data packet from client")
-			ch.streamUp.Close()
+			ch.sess.Close(errors.New("Unexpected format of data packet from client"))
 			break serveLoop
 		}
 		msgID, _ := strconv.Atoi(splitMsg[1])
 		if err = ch.sendAck(msgID); err != nil {
 			myLogPrintf(ch.id, "Encountered error when sending ACK on up stream: %v\n")
-			ch.streamUp.Close()
+			ch.sess.Close(err)
 			break serveLoop
 		}
 	}

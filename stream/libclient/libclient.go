@@ -214,11 +214,13 @@ sendLoop:
 		}
 		if time.Since(sh.startTime) >= sh.runTime {
 			sh.streamUp.Close()
+			sh.sess.Close(nil)
 			break sendLoop
 		} else {
 			err := sh.sendData()
 			if err != nil {
 				sh.streamUp.Close()
+				sh.sess.Close(err)
 				break sendLoop
 			}
 		}
@@ -251,16 +253,19 @@ func (sh *serverHandler) clientReceiverUp() {
 listenLoop:
 	for {
 		if sh.streamUp == nil {
+			sh.sess.Close(errors.New("No up stream"))
 			break listenLoop
 		}
 		read, err := io.ReadAtLeast(sh.streamUp, buf, 3)
 		rcvTime := time.Now()
 		if err != nil {
+			sh.sess.Close(err)
 			break listenLoop
 		}
 		msg := string(buf[:read])
 		splitMsg := strings.Split(msg, "&")
 		if !sh.checkFormatServerAck(splitMsg) {
+			sh.sess.Close(errors.New("Invalid format of ack from server in up stream"))
 			break listenLoop
 		}
 		ackMsgID, _ := strconv.Atoi(splitMsg[1])
@@ -311,21 +316,26 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 		NotifyID:  cfg.NotifyID,
 	}
 	fmt.Println("Trying to connect...")
+	var err error
 	// TODO: specify address
-	session, err := quic.DialAddr(sh.addr, tlsConfig, cfgClient)
+	sh.sess, err = quic.DialAddr(sh.addr, tlsConfig, cfgClient)
 	if err != nil {
 		return err
 	}
 	fmt.Println("Connected")
-	sh.streamDown, err = session.OpenStreamSync()
+	sh.streamDown, err = sh.sess.OpenStreamSync()
 	if err != nil {
+		sh.sess.Close(err)
 		return err
 	}
 
 	if sh.streamDown == nil {
-		return errors.New("Closed down stream when starting")
+		err = errors.New("Closed down stream when starting")
+		sh.sess.Close(err)
+		return err
 	}
-	if sh.sendStartPkt() != nil {
+	if err = sh.sendStartPkt(); err != nil {
+		sh.sess.Close(err)
 		return errors.New("Experienced error when sending start packet")
 	}
 
@@ -333,15 +343,19 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 	// FIXME timeout
 	_, err = io.ReadFull(sh.streamDown, buf)
 	if err != nil {
+		sh.sess.Close(err)
 		return errors.New("Read error when starting")
 	}
 	msg := string(buf)
 	if msg != "A&0" {
-		return errors.New("Unexpected server answer when starting")
+		err = errors.New("Unexpected server answer when starting")
+		sh.sess.Close(err)
+		return err
 	}
 
-	sh.streamUp, err = session.OpenStreamSync()
+	sh.streamUp, err = sh.sess.OpenStreamSync()
 	if err != nil {
+		sh.sess.Close(err)
 		return err
 	}
 
@@ -361,23 +375,31 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 listenLoop:
 	for {
 		if sh.streamDown == nil {
+			sh.sess.Close(errors.New("Stream down is nil"))
 			break listenLoop
 		}
 		read, err := io.ReadFull(sh.streamDown, buf)
 		if err != nil {
+			sh.sess.Close(err)
 			return err
 		}
 		if read != sh.chunkServerSize {
-			return errors.New("Read does not match chunkServerSize")
+			err := errors.New("Read does not match chunkServerSize")
+			sh.sess.Close(err)
+			return err
 		}
 		msg := string(buf)
 		splitMsg := strings.Split(msg, "&")
 		if !sh.checkFormatServerData(msg, splitMsg) {
-			return errors.New("Unexpected format of data packet from server")
+			err := errors.New("Unexpected format of data packet from server")
+			sh.sess.Close(err)
+			return err
 		}
 		msgID, _ := strconv.Atoi(splitMsg[1])
 		if sh.sendAck(msgID) != nil {
-			return errors.New("Got error when sending ack on down stream")
+			err := errors.New("Got error when sending ack on down stream")
+			sh.sess.Close(err)
+			return err
 		}
 		// Now perform delay extraction, to avoid adding extra estimated delay
 		sh.delaysLock.Lock()
@@ -385,7 +407,9 @@ listenLoop:
 			durInt, err := strconv.ParseInt(splitMsg[i], 10, 64)
 			if err != nil {
 				sh.delaysLock.Unlock()
-				return errors.New("Unparseable delay from server")
+				err := errors.New("Unparseable delay from server")
+				sh.sess.Close(err)
+				return err
 			}
 			sh.delaysDown = append(sh.delaysDown, time.Duration(durInt))
 			newDown <- tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
@@ -395,5 +419,6 @@ listenLoop:
 		sh.counterDown++
 		sh.counterLock.Unlock()
 	}
+	sh.sess.Close(nil)
 	return nil
 }
