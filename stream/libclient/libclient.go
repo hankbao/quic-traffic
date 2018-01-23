@@ -34,6 +34,11 @@ const (
 	maxIDCst              = 10000
 )
 
+type tsDelay struct {
+	ts    time.Time
+	delay time.Duration
+}
+
 type serverHandler struct {
 	ackSize            int
 	addr               string
@@ -43,8 +48,8 @@ type serverHandler struct {
 	counterDown        int
 	counterUp          int
 	counterLock        sync.Mutex
-	delaysDown         []time.Duration
-	delaysUp           []time.Duration
+	delaysDown         []tsDelay
+	delaysUp           []tsDelay
 	delaysLock         sync.Mutex
 	intervalClientTime time.Duration
 	intervalServerTime time.Duration
@@ -61,10 +66,6 @@ type serverHandler struct {
 }
 
 // Specific to in-progress results
-type tsDelay struct {
-	ts    time.Time
-	delay time.Duration
-}
 
 var (
 	newDelaysDown []tsDelay
@@ -133,8 +134,8 @@ func Run(cfg common.TrafficConfig) string {
 	sh := &serverHandler{
 		addr:               cfg.URL,
 		buffer:             new(bytes.Buffer),
-		delaysDown:         make([]time.Duration, 0),
-		delaysUp:           make([]time.Duration, 0),
+		delaysDown:         make([]tsDelay, 0),
+		delaysUp:           make([]tsDelay, 0),
 		printChan:          make(chan struct{}, 1),
 		runTime:            cfg.RunTime,
 		sentTime:           make(map[int]time.Time),
@@ -166,12 +167,12 @@ func (sh *serverHandler) printer() string {
 	sh.delaysLock.Lock()
 	sh.counterLock.Lock()
 	sh.buffer.WriteString(fmt.Sprintf("Up: %d\n", sh.counterUp))
-	for _, d := range sh.delaysUp {
-		sh.buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Microsecond)))
+	for _, d := range newDelaysUp {
+		sh.buffer.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 	}
 	sh.buffer.WriteString(fmt.Sprintf("Down: %d\n", sh.counterDown))
-	for _, d := range sh.delaysDown {
-		sh.buffer.WriteString(fmt.Sprintf("%d\n", int64(d/time.Microsecond)))
+	for _, d := range newDelaysDown {
+		sh.buffer.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 	}
 	sh.counterLock.Unlock()
 	sh.delaysLock.Unlock()
@@ -282,8 +283,9 @@ listenLoop:
 			continue
 		}
 		sh.delaysLock.Lock()
-		sh.delaysUp = append(sh.delaysUp, rcvTime.Sub(sent))
-		newUp <- tsDelay{ts: rcvTime, delay: rcvTime.Sub(sent)}
+		tsD := tsDelay{ts: rcvTime, delay: rcvTime.Sub(sent)}
+		sh.delaysUp = append(sh.delaysUp, tsD)
+		newUp <- tsD
 		sh.delaysLock.Unlock()
 		delete(sh.sentTime, ackedMsgID)
 		sh.nxtAckMsgID++
@@ -403,7 +405,8 @@ listenLoop:
 			return err
 		}
 		msgID, _ := strconv.Atoi(splitMsg[1])
-		if sh.sendAck(msgID) != nil {
+		if err2 := sh.sendAck(msgID); err != nil {
+			println(err2)
 			err := errors.New("Got error when sending ack on down stream")
 			sh.sess.Close(err)
 			return err
@@ -418,8 +421,9 @@ listenLoop:
 				sh.sess.Close(err)
 				return err
 			}
-			sh.delaysDown = append(sh.delaysDown, time.Duration(durInt))
-			newDown <- tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
+			tsD := tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
+			sh.delaysDown = append(sh.delaysDown, tsD)
+			newDown <- tsD
 		}
 		sh.delaysLock.Unlock()
 		sh.counterLock.Lock()
