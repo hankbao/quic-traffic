@@ -35,6 +35,7 @@ const (
 )
 
 type serverHandler struct {
+	ackSize            int
 	addr               string
 	buffer             *bytes.Buffer
 	chunkClientSize    int
@@ -139,6 +140,7 @@ func Run(cfg common.TrafficConfig) string {
 		chunkClientSize:    2000,
 		chunkServerSize:    2000,
 	}
+	sh.ackSize = 2 + len(strconv.Itoa(sh.maxID-1))
 	sh.printChan <- struct{}{}
 	initProgressWorker()
 	go progressWorker()
@@ -177,7 +179,8 @@ func (sh *serverHandler) sendAck(msgID int) error {
 	if sh.streamDown == nil {
 		return errors.New("Closed down stream")
 	}
-	msg := "A&" + strconv.Itoa(msgID+1)
+	msgIDStr := strconv.Itoa(msgID + 1)
+	msg := "A&" + strings.Repeat("0", sh.ackSize-2-len(msgIDStr)) + msgIDStr
 	_, err := sh.streamDown.Write([]byte(msg))
 	return err
 }
@@ -198,7 +201,7 @@ func (sh *serverHandler) sendStartPkt() error {
 	if sh.streamDown == nil {
 		return errors.New("Closed up stream")
 	}
-	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.chunkClientSize) + "&" + strconv.Itoa(sh.chunkServerSize) + "&" + strconv.FormatInt(int64(sh.intervalServerTime), 10)
+	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.Itoa(sh.ackSize) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.chunkClientSize) + "&" + strconv.Itoa(sh.chunkServerSize) + "&" + strconv.FormatInt(int64(sh.intervalServerTime), 10)
 	_, err := sh.streamDown.Write([]byte(msg))
 	return err
 }
@@ -247,7 +250,7 @@ func (sh *serverHandler) checkFormatServerAck(splitMsg []string) bool {
 }
 
 func (sh *serverHandler) clientReceiverUp() {
-	buf := make([]byte, 1000)
+	buf := make([]byte, sh.ackSize)
 	// 0 has been done previously
 	sh.nxtAckMsgID = 1
 listenLoop:
@@ -256,7 +259,7 @@ listenLoop:
 			sh.sess.Close(errors.New("No up stream"))
 			break listenLoop
 		}
-		read, err := io.ReadAtLeast(sh.streamUp, buf, 3)
+		read, err := io.ReadFull(sh.streamUp, buf)
 		rcvTime := time.Now()
 		if err != nil {
 			sh.sess.Close(err)
