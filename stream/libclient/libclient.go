@@ -77,8 +77,12 @@ var (
 )
 
 func GetProgressResults() string {
-	request <- struct{}{}
-	return <-response
+	select {
+	case request <- struct{}{}:
+		return <-response
+	default:
+		return ""
+	}
 }
 
 func initProgressWorker() {
