@@ -166,12 +166,12 @@ func (sh *serverHandler) printer() string {
 	<-sh.printChan
 	sh.delaysLock.Lock()
 	sh.counterLock.Lock()
-	sh.buffer.WriteString(fmt.Sprintf("Up: %d\n", sh.counterUp))
-	for _, d := range newDelaysUp {
+	sh.buffer.WriteString(fmt.Sprintf("Up: %d\n", len(sh.delaysUp)))
+	for _, d := range sh.delaysUp {
 		sh.buffer.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 	}
-	sh.buffer.WriteString(fmt.Sprintf("Down: %d\n", sh.counterDown))
-	for _, d := range newDelaysDown {
+	sh.buffer.WriteString(fmt.Sprintf("Down: %d\n", len(sh.delaysDown)))
+	for _, d := range sh.delaysDown {
 		sh.buffer.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 	}
 	sh.counterLock.Unlock()
