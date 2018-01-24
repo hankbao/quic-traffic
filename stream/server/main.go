@@ -35,8 +35,8 @@ type clientHandler struct {
 
 	ackSize            int
 	addr               string
-	chunkClientSize    int
-	chunkServerSize    int
+	clientChunkSize    int
+	serverChunkSize    int
 	delays             []time.Duration
 	delaysLock         sync.Mutex
 	intervalServerTime time.Duration
@@ -121,14 +121,14 @@ func (ch *clientHandler) sendData() error {
 		return errors.New("Closed down stream")
 	}
 	ch.delaysLock.Lock()
-	startString := "D&" + strconv.Itoa(ch.nxtMessageID) + "&" + strconv.Itoa(ch.chunkClientSize) + "&"
+	startString := "D&" + strconv.Itoa(ch.nxtMessageID) + "&" + strconv.Itoa(ch.clientChunkSize) + "&"
 	delaysStr := ""
 	for _, d := range ch.delays {
 		delaysStr += strconv.FormatInt(int64(d), 10) + "&"
 	}
 	ch.delays = ch.delays[:0]
 	ch.delaysLock.Unlock()
-	msg := startString + delaysStr + strings.Repeat("0", ch.chunkClientSize-len(startString)-len(delaysStr))
+	msg := startString + delaysStr + strings.Repeat("0", ch.clientChunkSize-len(startString)-len(delaysStr))
 	ch.sentTime[ch.nxtMessageID] = time.Now()
 	_, err := ch.streamDown.Write([]byte(msg))
 	ch.nxtMessageID = (ch.nxtMessageID + 1) % ch.maxID
@@ -137,7 +137,7 @@ func (ch *clientHandler) sendData() error {
 
 func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 	var err error
-	//S&{maxID}&{runTime}&{chunkClientSize}&{chunkServerSize}&{intervalServerTime}
+	//S&{maxID}&{runTime}&{clientChunkSize}&{serverChunkSize}&{intervalServerTime}
 	if len(splitMsg) != 7 {
 		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
 		return false
@@ -162,14 +162,14 @@ func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 		return false
 	}
 	ch.runTime = time.Duration(runTimeInt)
-	ch.chunkClientSize, err = strconv.Atoi(splitMsg[4])
-	if err != nil || ch.chunkClientSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid chunkClientSize: %s", splitMsg[3])
+	ch.clientChunkSize, err = strconv.Atoi(splitMsg[4])
+	if err != nil || ch.clientChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid clientChunkSize: %s", splitMsg[3])
 		return false
 	}
-	ch.chunkServerSize, err = strconv.Atoi(splitMsg[5])
-	if err != nil || ch.chunkServerSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid chunkServerSize: %s", splitMsg[4])
+	ch.serverChunkSize, err = strconv.Atoi(splitMsg[5])
+	if err != nil || ch.serverChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid serverChunkSize: %s", splitMsg[4])
 		return false
 	}
 	intervalServerTimeInt, err := strconv.ParseInt(splitMsg[6], 10, 64)
@@ -195,7 +195,7 @@ func (ch *clientHandler) checkFormatClientData(msg string, splitMsg []string) bo
 		return false
 	}
 	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != ch.chunkClientSize {
+	if err != nil || size != ch.clientChunkSize {
 		return false
 	}
 
@@ -308,7 +308,7 @@ func (ch *clientHandler) handle() {
 		return
 	}
 
-	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.chunkClientSize, ch.chunkServerSize, ch.intervalServerTime)
+	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.clientChunkSize, ch.serverChunkSize, ch.intervalServerTime)
 	if ch.sendInitialAck() != nil {
 		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
 		ch.sess.Close(errors.New("Error when sending initial ack on down stream"))
@@ -329,7 +329,7 @@ func (ch *clientHandler) handle() {
 	if ch.runTime > 0 {
 		ch.streamUp.SetDeadline(time.Now().Add(ch.runTime))
 	}
-	buf = make([]byte, ch.chunkClientSize)
+	buf = make([]byte, ch.clientChunkSize)
 
 serveLoop:
 	for {
@@ -339,8 +339,8 @@ serveLoop:
 			ch.sess.Close(err)
 			break serveLoop
 		}
-		if read != ch.chunkClientSize {
-			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.chunkClientSize)
+		if read != ch.clientChunkSize {
+			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.clientChunkSize)
 			ch.sess.Close(errors.New("Did not read the expected size on up stream"))
 			break serveLoop
 		}

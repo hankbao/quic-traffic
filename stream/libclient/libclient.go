@@ -19,7 +19,7 @@ import (
 
 /*
   Format start packet of client:
-  S&{maxID}&{runTime}&{chunkClientSize}&{chunkServerSize}&{intervalServerTime}
+  S&{maxID}&{runTime}&{clientChunkSize}&{serverChunkSize}&{intervalServerTime}
   Format data of client:
   D&{ID}&{SIZE}&{padding}
   Format data of server:
@@ -43,8 +43,8 @@ type serverHandler struct {
 	ackSize            int
 	addr               string
 	buffer             *bytes.Buffer
-	chunkClientSize    int
-	chunkServerSize    int
+	clientChunkSize    int
+	serverChunkSize    int
 	counterDown        int
 	counterUp          int
 	counterLock        sync.Mutex
@@ -142,8 +142,8 @@ func Run(cfg common.TrafficConfig) string {
 		maxID:              maxIDCst,
 		intervalClientTime: intervalClientTimeCst,
 		intervalServerTime: intervalServerTimeCst,
-		chunkClientSize:    2000,
-		chunkServerSize:    2000,
+		clientChunkSize:    2000,
+		serverChunkSize:    2000,
 	}
 	sh.ackSize = 2 + len(strconv.Itoa(sh.maxID-1))
 	sh.printChan <- struct{}{}
@@ -194,8 +194,8 @@ func (sh *serverHandler) sendData() error {
 	if sh.streamUp == nil {
 		return errors.New("Closed up stream")
 	}
-	startString := "D&" + strconv.Itoa(sh.nxtMessageID) + "&" + strconv.Itoa(sh.chunkClientSize) + "&"
-	msg := startString + strings.Repeat("0", sh.chunkClientSize-len(startString))
+	startString := "D&" + strconv.Itoa(sh.nxtMessageID) + "&" + strconv.Itoa(sh.clientChunkSize) + "&"
+	msg := startString + strings.Repeat("0", sh.clientChunkSize-len(startString))
 	sh.sentTime[sh.nxtMessageID] = time.Now()
 	_, err := sh.streamUp.Write([]byte(msg))
 	sh.nxtMessageID = (sh.nxtMessageID + 1) % sh.maxID
@@ -206,7 +206,7 @@ func (sh *serverHandler) sendStartPkt() error {
 	if sh.streamDown == nil {
 		return errors.New("Closed up stream")
 	}
-	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.Itoa(sh.ackSize) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.chunkClientSize) + "&" + strconv.Itoa(sh.chunkServerSize) + "&" + strconv.FormatInt(int64(sh.intervalServerTime), 10)
+	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.Itoa(sh.ackSize) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.clientChunkSize) + "&" + strconv.Itoa(sh.serverChunkSize) + "&" + strconv.FormatInt(int64(sh.intervalServerTime), 10)
 	_, err := sh.streamDown.Write([]byte(msg))
 	return err
 }
@@ -309,7 +309,7 @@ func (sh *serverHandler) checkFormatServerData(msg string, splitMsg []string) bo
 		return false
 	}
 	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != sh.chunkServerSize {
+	if err != nil || size != sh.serverChunkSize {
 		return false
 	}
 
@@ -379,7 +379,7 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 		sh.streamDown.SetDeadline(time.Now().Add(sh.runTime))
 	}
 
-	buf = make([]byte, sh.chunkServerSize)
+	buf = make([]byte, sh.serverChunkSize)
 
 listenLoop:
 	for {
@@ -392,8 +392,8 @@ listenLoop:
 			sh.sess.Close(err)
 			return err
 		}
-		if read != sh.chunkServerSize {
-			err := errors.New("Read does not match chunkServerSize")
+		if read != sh.serverChunkSize {
+			err := errors.New("Read does not match serverChunkSize")
 			sh.sess.Close(err)
 			return err
 		}
