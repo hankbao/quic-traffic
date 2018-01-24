@@ -19,7 +19,7 @@ import (
 
 /*
   Format start packet of client:
-  S&{maxID}&{runTime}&{clientChunkSize}&{serverChunkSize}&{intervalServerTime}
+  S&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
   Format data of client:
   D&{ID}&{SIZE}&{padding}
   Format data of server:
@@ -29,9 +29,9 @@ import (
 */
 
 const (
-	intervalClientTimeCst = 100 * time.Millisecond
-	intervalServerTimeCst = 100 * time.Millisecond
-	maxIDCst              = 10000
+	uploadIntervalTimeCst   = 100 * time.Millisecond
+	downloadIntervalTimeCst = 100 * time.Millisecond
+	maxIDCst                = 10000
 )
 
 type tsDelay struct {
@@ -40,29 +40,29 @@ type tsDelay struct {
 }
 
 type serverHandler struct {
-	ackSize            int
-	addr               string
-	buffer             *bytes.Buffer
-	clientChunkSize    int
-	serverChunkSize    int
-	counterDown        int
-	counterUp          int
-	counterLock        sync.Mutex
-	delaysDown         []tsDelay
-	delaysUp           []tsDelay
-	delaysLock         sync.Mutex
-	intervalClientTime time.Duration
-	intervalServerTime time.Duration
-	maxID              int
-	nxtAckMsgID        int
-	nxtMessageID       int
-	printChan          chan struct{}
-	runTime            time.Duration
-	sentTime           map[int]time.Time
-	sess               quic.Session
-	startTime          time.Time
-	streamDown         quic.Stream
-	streamUp           quic.Stream
+	ackSize              int
+	addr                 string
+	buffer               *bytes.Buffer
+	uploadChunkSize      int
+	downloadChunkSize    int
+	counterDown          int
+	counterUp            int
+	counterLock          sync.Mutex
+	delaysDown           []tsDelay
+	delaysUp             []tsDelay
+	delaysLock           sync.Mutex
+	uploadIntervalTime   time.Duration
+	downloadIntervalTime time.Duration
+	maxID                int
+	nxtAckMsgID          int
+	nxtMessageID         int
+	printChan            chan struct{}
+	runTime              time.Duration
+	sentTime             map[int]time.Time
+	sess                 quic.Session
+	startTime            time.Time
+	streamDown           quic.Stream
+	streamUp             quic.Stream
 }
 
 // Specific to in-progress results
@@ -132,18 +132,18 @@ workerLoop:
 // over the uplink stream, the server over the downlink one.
 func Run(cfg common.TrafficConfig) string {
 	sh := &serverHandler{
-		addr:               cfg.URL,
-		buffer:             new(bytes.Buffer),
-		delaysDown:         make([]tsDelay, 0),
-		delaysUp:           make([]tsDelay, 0),
-		printChan:          make(chan struct{}, 1),
-		runTime:            cfg.RunTime,
-		sentTime:           make(map[int]time.Time),
-		maxID:              maxIDCst,
-		intervalClientTime: intervalClientTimeCst,
-		intervalServerTime: intervalServerTimeCst,
-		clientChunkSize:    2000,
-		serverChunkSize:    2000,
+		addr:                 cfg.URL,
+		buffer:               new(bytes.Buffer),
+		delaysDown:           make([]tsDelay, 0),
+		delaysUp:             make([]tsDelay, 0),
+		printChan:            make(chan struct{}, 1),
+		runTime:              cfg.RunTime,
+		sentTime:             make(map[int]time.Time),
+		maxID:                maxIDCst,
+		uploadIntervalTime:   uploadIntervalTimeCst,
+		downloadIntervalTime: downloadIntervalTimeCst,
+		uploadChunkSize:      2000,
+		downloadChunkSize:    2000,
 	}
 	sh.ackSize = 2 + len(strconv.Itoa(sh.maxID-1))
 	sh.printChan <- struct{}{}
@@ -194,8 +194,8 @@ func (sh *serverHandler) sendData() error {
 	if sh.streamUp == nil {
 		return errors.New("Closed up stream")
 	}
-	startString := "D&" + strconv.Itoa(sh.nxtMessageID) + "&" + strconv.Itoa(sh.clientChunkSize) + "&"
-	msg := startString + strings.Repeat("0", sh.clientChunkSize-len(startString))
+	startString := "D&" + strconv.Itoa(sh.nxtMessageID) + "&" + strconv.Itoa(sh.uploadChunkSize) + "&"
+	msg := startString + strings.Repeat("0", sh.uploadChunkSize-len(startString))
 	sh.sentTime[sh.nxtMessageID] = time.Now()
 	_, err := sh.streamUp.Write([]byte(msg))
 	sh.nxtMessageID = (sh.nxtMessageID + 1) % sh.maxID
@@ -206,7 +206,7 @@ func (sh *serverHandler) sendStartPkt() error {
 	if sh.streamDown == nil {
 		return errors.New("Closed up stream")
 	}
-	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.Itoa(sh.ackSize) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.clientChunkSize) + "&" + strconv.Itoa(sh.serverChunkSize) + "&" + strconv.FormatInt(int64(sh.intervalServerTime), 10)
+	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.Itoa(sh.ackSize) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.uploadChunkSize) + "&" + strconv.Itoa(sh.downloadChunkSize) + "&" + strconv.FormatInt(int64(sh.downloadIntervalTime), 10)
 	_, err := sh.streamDown.Write([]byte(msg))
 	return err
 }
@@ -232,7 +232,7 @@ sendLoop:
 				break sendLoop
 			}
 		}
-		time.Sleep(sh.intervalClientTime)
+		time.Sleep(sh.uploadIntervalTime)
 	}
 }
 
@@ -309,7 +309,7 @@ func (sh *serverHandler) checkFormatServerData(msg string, splitMsg []string) bo
 		return false
 	}
 	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != sh.serverChunkSize {
+	if err != nil || size != sh.downloadChunkSize {
 		return false
 	}
 
@@ -379,7 +379,7 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 		sh.streamDown.SetDeadline(time.Now().Add(sh.runTime))
 	}
 
-	buf = make([]byte, sh.serverChunkSize)
+	buf = make([]byte, sh.downloadChunkSize)
 
 listenLoop:
 	for {
@@ -392,8 +392,8 @@ listenLoop:
 			sh.sess.Close(err)
 			return err
 		}
-		if read != sh.serverChunkSize {
-			err := errors.New("Read does not match serverChunkSize")
+		if read != sh.downloadChunkSize {
+			err := errors.New("Read does not match downloadChunkSize")
 			sh.sess.Close(err)
 			return err
 		}

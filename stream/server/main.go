@@ -33,22 +33,22 @@ var (
 type clientHandler struct {
 	id uint64
 
-	ackSize            int
-	addr               string
-	clientChunkSize    int
-	serverChunkSize    int
-	delays             []time.Duration
-	delaysLock         sync.Mutex
-	intervalServerTime time.Duration
-	maxID              int
-	nxtAckMsgID        int
-	nxtMessageID       int
-	runTime            time.Duration
-	sentTime           map[int]time.Time
-	sess               quic.Session
-	startTime          time.Time
-	streamDown         quic.Stream
-	streamUp           quic.Stream
+	ackSize              int
+	addr                 string
+	uploadChunkSize      int
+	downloadChunkSize    int
+	delays               []time.Duration
+	delaysLock           sync.Mutex
+	downloadIntervalTime time.Duration
+	maxID                int
+	nxtAckMsgID          int
+	nxtMessageID         int
+	runTime              time.Duration
+	sentTime             map[int]time.Time
+	sess                 quic.Session
+	startTime            time.Time
+	streamDown           quic.Stream
+	streamUp             quic.Stream
 }
 
 func myLogPrintf(id uint64, format string, v ...interface{}) {
@@ -121,14 +121,14 @@ func (ch *clientHandler) sendData() error {
 		return errors.New("Closed down stream")
 	}
 	ch.delaysLock.Lock()
-	startString := "D&" + strconv.Itoa(ch.nxtMessageID) + "&" + strconv.Itoa(ch.clientChunkSize) + "&"
+	startString := "D&" + strconv.Itoa(ch.nxtMessageID) + "&" + strconv.Itoa(ch.uploadChunkSize) + "&"
 	delaysStr := ""
 	for _, d := range ch.delays {
 		delaysStr += strconv.FormatInt(int64(d), 10) + "&"
 	}
 	ch.delays = ch.delays[:0]
 	ch.delaysLock.Unlock()
-	msg := startString + delaysStr + strings.Repeat("0", ch.clientChunkSize-len(startString)-len(delaysStr))
+	msg := startString + delaysStr + strings.Repeat("0", ch.uploadChunkSize-len(startString)-len(delaysStr))
 	ch.sentTime[ch.nxtMessageID] = time.Now()
 	_, err := ch.streamDown.Write([]byte(msg))
 	ch.nxtMessageID = (ch.nxtMessageID + 1) % ch.maxID
@@ -137,7 +137,7 @@ func (ch *clientHandler) sendData() error {
 
 func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 	var err error
-	//S&{maxID}&{runTime}&{clientChunkSize}&{serverChunkSize}&{intervalServerTime}
+	//S&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
 	if len(splitMsg) != 7 {
 		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
 		return false
@@ -162,22 +162,22 @@ func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 		return false
 	}
 	ch.runTime = time.Duration(runTimeInt)
-	ch.clientChunkSize, err = strconv.Atoi(splitMsg[4])
-	if err != nil || ch.clientChunkSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid clientChunkSize: %s", splitMsg[3])
+	ch.uploadChunkSize, err = strconv.Atoi(splitMsg[4])
+	if err != nil || ch.uploadChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid uploadChunkSize: %s", splitMsg[3])
 		return false
 	}
-	ch.serverChunkSize, err = strconv.Atoi(splitMsg[5])
-	if err != nil || ch.serverChunkSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid serverChunkSize: %s", splitMsg[4])
+	ch.downloadChunkSize, err = strconv.Atoi(splitMsg[5])
+	if err != nil || ch.downloadChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid downloadChunkSize: %s", splitMsg[4])
 		return false
 	}
-	intervalServerTimeInt, err := strconv.ParseInt(splitMsg[6], 10, 64)
-	if err != nil || intervalServerTimeInt <= 0 {
-		myLogPrintf(ch.id, "Invalid intervalServerTime: %s with error: %v", splitMsg[5], err)
+	downloadIntervalTimeInt, err := strconv.ParseInt(splitMsg[6], 10, 64)
+	if err != nil || downloadIntervalTimeInt <= 0 {
+		myLogPrintf(ch.id, "Invalid downloadIntervalTime: %s with error: %v", splitMsg[5], err)
 		return false
 	}
-	ch.intervalServerTime = time.Duration(intervalServerTimeInt)
+	ch.downloadIntervalTime = time.Duration(downloadIntervalTimeInt)
 
 	return true
 }
@@ -195,7 +195,7 @@ func (ch *clientHandler) checkFormatClientData(msg string, splitMsg []string) bo
 		return false
 	}
 	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != ch.clientChunkSize {
+	if err != nil || size != ch.uploadChunkSize {
 		return false
 	}
 
@@ -222,7 +222,7 @@ sendLoop:
 				break sendLoop
 			}
 		}
-		time.Sleep(ch.intervalServerTime)
+		time.Sleep(ch.downloadIntervalTime)
 	}
 }
 
@@ -308,7 +308,7 @@ func (ch *clientHandler) handle() {
 		return
 	}
 
-	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.clientChunkSize, ch.serverChunkSize, ch.intervalServerTime)
+	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
 	if ch.sendInitialAck() != nil {
 		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
 		ch.sess.Close(errors.New("Error when sending initial ack on down stream"))
@@ -329,7 +329,7 @@ func (ch *clientHandler) handle() {
 	if ch.runTime > 0 {
 		ch.streamUp.SetDeadline(time.Now().Add(ch.runTime))
 	}
-	buf = make([]byte, ch.clientChunkSize)
+	buf = make([]byte, ch.uploadChunkSize)
 
 serveLoop:
 	for {
@@ -339,8 +339,8 @@ serveLoop:
 			ch.sess.Close(err)
 			break serveLoop
 		}
-		if read != ch.clientChunkSize {
-			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.clientChunkSize)
+		if read != ch.uploadChunkSize {
+			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.uploadChunkSize)
 			ch.sess.Close(errors.New("Did not read the expected size on up stream"))
 			break serveLoop
 		}
