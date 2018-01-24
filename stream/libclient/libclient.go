@@ -285,7 +285,10 @@ listenLoop:
 		sh.delaysLock.Lock()
 		tsD := tsDelay{ts: rcvTime, delay: rcvTime.Sub(sent)}
 		sh.delaysUp = append(sh.delaysUp, tsD)
-		newUp <- tsD
+		select {
+		case newUp <- tsD:
+		case <-closed: // Yep, we might be stuck in a deadlock otherwise...
+		}
 		sh.delaysLock.Unlock()
 		delete(sh.sentTime, ackedMsgID)
 		sh.nxtAckMsgID++
@@ -423,7 +426,10 @@ listenLoop:
 			}
 			tsD := tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
 			sh.delaysDown = append(sh.delaysDown, tsD)
-			newDown <- tsD
+			select {
+			case newDown <- tsD:
+			case <-closed: // Yep, we might be stuck in a deadlock otherwise...
+			}
 		}
 		sh.delaysLock.Unlock()
 		sh.counterLock.Lock()
