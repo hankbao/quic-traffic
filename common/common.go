@@ -13,7 +13,9 @@ type TrafficConfig struct {
 	URL       string
 
 	// For bulk
-	PrintBody bool
+	PrintBody  bool
+	PingCount  int
+	PingWaitMs int
 
 	// For interactive
 	RunTime time.Duration

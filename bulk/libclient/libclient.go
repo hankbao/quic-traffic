@@ -38,32 +38,51 @@ func Run(cfg common.TrafficConfig) string {
 		Transport: &h2quic.RoundTripper{QuicConfig: quicConfig, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}
 
+	pingCount := 1
+	pingWait := time.Second
+
+	if cfg.PingCount > 0 && cfg.PingWaitMs > 0 {
+		pingCount = cfg.PingCount
+		pingWait = time.Duration(cfg.PingWaitMs) * time.Millisecond
+	}
+
 	var wg sync.WaitGroup
 
 	wg.Add(1)
 	log.Printf("GET %s", cfg.URL)
 	var elapsedStr = "-1.0s"
 	go func(addr string) {
-		start := time.Now()
-		rsp, err := hclient.Get(addr)
-		if err != nil {
-			log.Printf("ERROR: %s", err)
-			wg.Done()
-			return
-		}
+		for i := 0; i <= pingCount; i++ {
+			if i > 0 {
+				time.Sleep(pingWait)
+			}
+			start := time.Now()
+			rsp, err := hclient.Get(addr)
+			if err != nil {
+				log.Printf("ERROR: %s", err)
+				wg.Done()
+				return
+			}
 
-		body := &bytes.Buffer{}
-		_, err = io.Copy(body, rsp.Body)
-		if err != nil {
-			log.Printf("ERROR: %s", err)
-			wg.Done()
-			return
-		}
-		elapsed := time.Since(start)
-		elapsedStr = fmt.Sprintf("%s", elapsed)
-		rsp.Body.Close()
-		if cfg.PrintBody {
-			log.Printf("%s", body)
+			body := &bytes.Buffer{}
+			_, err = io.Copy(body, rsp.Body)
+			if err != nil {
+				log.Printf("ERROR: %s", err)
+				wg.Done()
+				return
+			}
+			elapsed := time.Since(start)
+			if i <= 1 {
+				// If ping, ignore first request as it will contains additional delay
+				elapsedStr = fmt.Sprintf("%s", elapsed)
+			} else {
+				elapsedStr += fmt.Sprintf("\n%s", elapsed)
+			}
+
+			rsp.Body.Close()
+			if cfg.PrintBody {
+				log.Printf("%s", body)
+			}
 		}
 		wg.Done()
 	}(cfg.URL)

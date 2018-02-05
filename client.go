@@ -22,6 +22,8 @@ type RunConfig interface {
 	MaxPathID() int
 	NotifyID() string
 	Output() string
+	PingCount() int
+	PingWaitMs() int
 	PrintBody() bool
 	RunTime() int // in seconds
 	Traffic() string
@@ -35,13 +37,15 @@ func Run(runcfg RunConfig) string {
 		output = output[7:]
 	}
 	cfg := common.TrafficConfig{
-		Cache:     runcfg.Cache(),
-		MaxPathID: uint8(runcfg.MaxPathID()),
-		NotifyID:  runcfg.NotifyID(),
-		Output:    output,
-		PrintBody: runcfg.PrintBody(),
-		URL:       runcfg.URL(),
-		RunTime:   time.Duration(runcfg.RunTime()) * time.Second,
+		Cache:      runcfg.Cache(),
+		MaxPathID:  uint8(runcfg.MaxPathID()),
+		NotifyID:   runcfg.NotifyID(),
+		Output:     output,
+		PingCount:  runcfg.PingCount(),
+		PingWaitMs: runcfg.PingWaitMs(),
+		PrintBody:  runcfg.PrintBody(),
+		URL:        runcfg.URL(),
+		RunTime:    time.Duration(runcfg.RunTime()) * time.Second,
 	}
 	logFile := runcfg.LogFile()
 	if strings.HasPrefix(logFile, "file://") {
