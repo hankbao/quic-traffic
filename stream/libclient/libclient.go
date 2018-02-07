@@ -76,6 +76,7 @@ var (
 	request       chan struct{}
 	response      chan string
 	closed        chan struct{}
+	handlers      = make(map[string]*serverHandler)
 )
 
 func GetProgressResults() string {
@@ -84,6 +85,13 @@ func GetProgressResults() string {
 		return <-response
 	default:
 		return ""
+	}
+}
+
+func StopStream(notifyID string) {
+	handler, ok := handlers[notifyID]
+	if ok {
+		handler.sess.Close(nil)
 	}
 }
 
@@ -145,6 +153,7 @@ func Run(cfg common.TrafficConfig) string {
 		uploadChunkSize:      2000,
 		downloadChunkSize:    2000,
 	}
+	handlers[cfg.NotifyID] = sh
 	sh.ackSize = 2 + len(strconv.Itoa(sh.maxID-1))
 	sh.printChan <- struct{}{}
 	initProgressWorker()
@@ -152,6 +161,7 @@ func Run(cfg common.TrafficConfig) string {
 	err := sh.handle(cfg)
 	sh.buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
 	close(closed)
+	delete(handlers, cfg.NotifyID)
 	return sh.printer()
 }
 

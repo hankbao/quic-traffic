@@ -17,6 +17,6 @@ type TrafficConfig struct {
 	PingCount  int
 	PingWaitMs int
 
-	// For interactive
+	// For interactive, qperf, stream
 	RunTime time.Duration
 }

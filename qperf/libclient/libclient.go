@@ -58,7 +58,7 @@ func Run(cfg common.TrafficConfig) string {
 	addr = cfg.URL
 	var err error
 
-	err = iperfClient(quicConfig, 10*time.Second)
+	err = iperfClient(quicConfig, cfg.RunTime)
 
 	if err != nil {
 		return err.Error()

@@ -89,3 +89,8 @@ func NotifyReachability(notifyID string) {
 func GetStreamProgressResult() string {
 	return stream.GetProgressResults()
 }
+
+// StopStream stops the current stream traffic
+func StopStream(notifyID string) {
+	stream.StopStream(notifyID)
+}
