@@ -212,7 +212,7 @@ sendLoop:
 			ch.sess.Close(errors.New("Closed down stream"))
 			break sendLoop
 		}
-		if time.Since(ch.startTime) >= ch.runTime {
+		if ch.runTime > 0 && time.Since(ch.startTime) >= ch.runTime {
 			ch.sess.Close(nil)
 			break sendLoop
 		} else {

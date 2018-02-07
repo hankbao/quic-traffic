@@ -230,7 +230,7 @@ sendLoop:
 		if sh.streamUp == nil {
 			break sendLoop
 		}
-		if time.Since(sh.startTime) >= sh.runTime {
+		if sh.runTime > 0 && time.Since(sh.startTime) >= sh.runTime {
 			sh.streamUp.Close()
 			sh.sess.Close(nil)
 			break sendLoop
