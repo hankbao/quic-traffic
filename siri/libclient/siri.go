@@ -174,8 +174,9 @@ func clientMain(cfg common.TrafficConfig) error {
 		InsecureSkipVerify: true,
 	}
 	cfgClient := &quic.Config{
-		MaxPathID: cfg.MaxPathID,
-		NotifyID:  cfg.NotifyID,
+		MaxPathID:        cfg.MaxPathID,
+		MultipathService: cfg.MultipathService,
+		NotifyID:         cfg.NotifyID,
 	}
 	fmt.Println("Trying to connect...")
 	// TODO: specify address

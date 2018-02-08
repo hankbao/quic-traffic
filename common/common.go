@@ -2,15 +2,18 @@ package common
 
 import (
 	"time"
+
+	quic "github.com/lucas-clemente/quic-go"
 )
 
 type TrafficConfig struct {
 	// Generic for all cases
-	Cache     bool
-	MaxPathID uint8
-	NotifyID  string
-	Output    string
-	URL       string
+	Cache            bool
+	MaxPathID        uint8
+	MultipathService quic.MultipathServiceType
+	NotifyID         string
+	Output           string
+	URL              string
 
 	// For bulk
 	PrintBody  bool

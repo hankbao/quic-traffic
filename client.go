@@ -20,6 +20,7 @@ type RunConfig interface {
 	LogFile() string
 	LogPeriodMs() int
 	MaxPathID() int
+	MultipathService() string
 	NotifyID() string
 	Output() string
 	PingCount() int
@@ -52,6 +53,13 @@ func Run(runcfg RunConfig) string {
 		logFile = logFile[7:]
 	}
 
+	if runcfg.MultipathService() == "aggregate" {
+		cfg.MultipathService = quic.Aggregate
+	}
+	if runcfg.MultipathService() == "handover" {
+		cfg.MultipathService = quic.Handover
+	}
+
 	quic.SetLoggerParams(logFile, time.Duration(runcfg.LogPeriodMs())*time.Millisecond)
 
 	var res string
@@ -80,7 +88,7 @@ func Run(runcfg RunConfig) string {
 func NotifyReachability(notifyID string) {
 	callback, ok := quic.GetNotifier(notifyID)
 	if ok {
-		print("Notifying ", notifyID)
+		println("Notifying ", notifyID)
 		callback.Notify()
 	}
 }

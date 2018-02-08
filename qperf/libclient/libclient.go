@@ -48,9 +48,10 @@ func Run(cfg common.TrafficConfig) string {
 	}
 
 	quicConfig := &quic.Config{
-		MaxPathID:      cfg.MaxPathID,
-		NotifyID:       cfg.NotifyID,
-		CacheHandshake: cfg.Cache,
+		MaxPathID:        cfg.MaxPathID,
+		MultipathService: cfg.MultipathService,
+		NotifyID:         cfg.NotifyID,
+		CacheHandshake:   cfg.Cache,
 	}
 
 	flag.Parse()
