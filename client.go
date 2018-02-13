@@ -94,8 +94,8 @@ func NotifyReachability(notifyID string) {
 }
 
 // GetStreamProgressResult gets ongoing stream delays
-func GetStreamProgressResult() string {
-	return stream.GetProgressResults()
+func GetStreamProgressResult(notifyID string) string {
+	return stream.GetProgressResults(notifyID)
 }
 
 // StopStream stops the current stream traffic

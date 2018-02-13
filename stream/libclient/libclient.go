@@ -63,11 +63,8 @@ type serverHandler struct {
 	startTime            time.Time
 	streamDown           quic.Stream
 	streamUp             quic.Stream
-}
 
-// Specific to in-progress results
-
-var (
+	// Specific to in-progress results
 	newDelaysDown []tsDelay
 	newDelaysUp   []tsDelay
 	newDelaysLock sync.RWMutex
@@ -76,57 +73,83 @@ var (
 	request       chan struct{}
 	response      chan string
 	closed        chan struct{}
-	handlers      = make(map[string]*serverHandler)
+	closeLock     sync.Mutex
+}
+
+var (
+	handlers     = make(map[string]*serverHandler)
+	handlersLock sync.RWMutex
 )
 
-func GetProgressResults() string {
-	select {
-	case request <- struct{}{}:
-		return <-response
-	default:
-		return ""
+func GetProgressResults(notifyID string) string {
+	handlersLock.RLock()
+	defer handlersLock.RUnlock()
+	hl, ok := handlers[notifyID]
+	if ok {
+		select {
+		case hl.request <- struct{}{}:
+			return <-hl.response
+		default:
+			return ""
+		}
 	}
+	return ""
 }
 
 func StopStream(notifyID string) {
-	handler, ok := handlers[notifyID]
+	handlersLock.RLock()
+	defer handlersLock.RUnlock()
+	hl, ok := handlers[notifyID]
 	if ok {
-		handler.sess.Close(nil)
+		hl.closeSession(nil)
 	}
 }
 
-func initProgressWorker() {
-	newDelaysDown = make([]tsDelay, 0)
-	newDelaysUp = make([]tsDelay, 0)
-	newDown = make(chan tsDelay, 5)
-	newUp = make(chan tsDelay, 5)
-	request = make(chan struct{})
-	response = make(chan string)
-	closed = make(chan struct{})
+func (sh *serverHandler) closeSession(err error) {
+	sh.closeLock.Lock()
+	defer sh.closeLock.Unlock()
+	// Also close the chan
+	select {
+	case <-sh.closed:
+		// Nothing to do
+	default:
+		close(sh.closed)
+		sh.sess.Close(err)
+	}
 }
 
-func progressWorker() {
+func (sh *serverHandler) initProgressWorker() {
+	sh.newDelaysDown = make([]tsDelay, 0)
+	sh.newDelaysUp = make([]tsDelay, 0)
+	sh.newDown = make(chan tsDelay, 5)
+	sh.newUp = make(chan tsDelay, 5)
+	sh.request = make(chan struct{})
+	sh.response = make(chan string)
+	sh.closed = make(chan struct{})
+}
+
+func (sh *serverHandler) progressWorker() {
 workerLoop:
 	for {
 		select {
-		case d := <-newDown:
-			newDelaysDown = append(newDelaysDown, d)
-		case u := <-newUp:
-			newDelaysUp = append(newDelaysUp, u)
-		case <-request:
+		case d := <-sh.newDown:
+			sh.newDelaysDown = append(sh.newDelaysDown, d)
+		case u := <-sh.newUp:
+			sh.newDelaysUp = append(sh.newDelaysUp, u)
+		case <-sh.request:
 			buf := new(bytes.Buffer)
-			buf.WriteString(fmt.Sprintf("Up: %d\n", len(newDelaysUp)))
-			for _, d := range newDelaysUp {
+			buf.WriteString(fmt.Sprintf("Up: %d\n", len(sh.newDelaysUp)))
+			for _, d := range sh.newDelaysUp {
 				buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 			}
-			buf.WriteString(fmt.Sprintf("Down: %d\n", len(newDelaysDown)))
-			for _, d := range newDelaysDown {
+			buf.WriteString(fmt.Sprintf("Down: %d\n", len(sh.newDelaysDown)))
+			for _, d := range sh.newDelaysDown {
 				buf.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 			}
-			newDelaysUp = newDelaysUp[:0]
-			newDelaysDown = newDelaysDown[:0]
-			response <- buf.String()
-		case <-closed:
+			sh.newDelaysUp = sh.newDelaysUp[:0]
+			sh.newDelaysDown = sh.newDelaysDown[:0]
+			sh.response <- buf.String()
+		case <-sh.closed:
 			break workerLoop
 		}
 	}
@@ -153,15 +176,22 @@ func Run(cfg common.TrafficConfig) string {
 		uploadChunkSize:      2000,
 		downloadChunkSize:    2000,
 	}
+	// A new closed should be put here
+	handlersLock.Lock()
 	handlers[cfg.NotifyID] = sh
+	handlersLock.Unlock()
 	sh.ackSize = 2 + len(strconv.Itoa(sh.maxID-1))
 	sh.printChan <- struct{}{}
-	initProgressWorker()
-	go progressWorker()
+	sh.initProgressWorker()
+	go sh.progressWorker()
 	err := sh.handle(cfg)
+	fmt.Println("Out of handle")
 	sh.buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
-	close(closed)
+	sh.closeSession(err)
+	handlersLock.Lock()
 	delete(handlers, cfg.NotifyID)
+	handlersLock.Unlock()
+	fmt.Println("Just to print out")
 	return sh.printer()
 }
 
@@ -225,20 +255,17 @@ func (sh *serverHandler) clientSenderUp() {
 	if sh.runTime > 0 {
 		sh.streamUp.SetDeadline(time.Now().Add(sh.runTime))
 	}
+	var err error
 sendLoop:
 	for {
 		if sh.streamUp == nil {
 			break sendLoop
 		}
 		if sh.runTime > 0 && time.Since(sh.startTime) >= sh.runTime {
-			sh.streamUp.Close()
-			sh.sess.Close(nil)
 			break sendLoop
 		} else {
-			err := sh.sendData()
+			err = sh.sendData()
 			if err != nil {
-				sh.streamUp.Close()
-				sh.sess.Close(err)
 				break sendLoop
 			}
 		}
@@ -248,16 +275,16 @@ sendLoop:
 
 func (sh *serverHandler) checkFormatServerAck(splitMsg []string) bool {
 	if len(splitMsg) != 2 {
-		println("Wrong size: %d", len(splitMsg))
+		fmt.Println("Wrong size:", len(splitMsg))
 		return false
 	}
 	if splitMsg[0] != "A" {
-		println("Wrong prefix: %s", splitMsg[0])
+		fmt.Println("Wrong prefix:", splitMsg[0])
 		return false
 	}
 	ackMsgID, err := strconv.Atoi(splitMsg[1])
 	if err != nil || ackMsgID != sh.nxtAckMsgID {
-		println("Wrong ack num: %s but expects %d", splitMsg[1], sh.nxtAckMsgID)
+		fmt.Println("Wrong ack num:", splitMsg[1], "but expects", sh.nxtAckMsgID)
 		return false
 	}
 
@@ -268,22 +295,22 @@ func (sh *serverHandler) clientReceiverUp() {
 	buf := make([]byte, sh.ackSize)
 	// 0 has been done previously
 	sh.nxtAckMsgID = 1
+	//var err error
 listenLoop:
 	for {
 		if sh.streamUp == nil {
-			sh.sess.Close(errors.New("No up stream"))
+			//err = errors.New("No up stream")
 			break listenLoop
 		}
 		read, err := io.ReadFull(sh.streamUp, buf)
 		rcvTime := time.Now()
 		if err != nil {
-			sh.sess.Close(err)
 			break listenLoop
 		}
 		msg := string(buf[:read])
 		splitMsg := strings.Split(msg, "&")
 		if !sh.checkFormatServerAck(splitMsg) {
-			sh.sess.Close(errors.New("Invalid format of ack from server in up stream"))
+			err = errors.New("Invalid format of ack from server in up stream")
 			break listenLoop
 		}
 		ackMsgID, _ := strconv.Atoi(splitMsg[1])
@@ -296,8 +323,8 @@ listenLoop:
 		tsD := tsDelay{ts: rcvTime, delay: rcvTime.Sub(sent)}
 		sh.delaysUp = append(sh.delaysUp, tsD)
 		select {
-		case newUp <- tsD:
-		case <-closed: // Yep, we might be stuck in a deadlock otherwise...
+		case sh.newUp <- tsD:
+		case <-sh.closed: // Yep, we might be stuck in a deadlock otherwise...
 		}
 		sh.delaysLock.Unlock()
 		delete(sh.sentTime, ackedMsgID)
@@ -348,17 +375,13 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 	fmt.Println("Connected")
 	sh.streamDown, err = sh.sess.OpenStreamSync()
 	if err != nil {
-		sh.sess.Close(err)
 		return err
 	}
 
 	if sh.streamDown == nil {
-		err = errors.New("Closed down stream when starting")
-		sh.sess.Close(err)
-		return err
+		return errors.New("Closed down stream when starting")
 	}
 	if err = sh.sendStartPkt(); err != nil {
-		sh.sess.Close(err)
 		return errors.New("Experienced error when sending start packet")
 	}
 
@@ -366,19 +389,15 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 	// FIXME timeout
 	_, err = io.ReadFull(sh.streamDown, buf)
 	if err != nil {
-		sh.sess.Close(err)
 		return errors.New("Read error when starting")
 	}
 	msg := string(buf)
 	if msg != "A&0" {
-		err = errors.New("Unexpected server answer when starting")
-		sh.sess.Close(err)
-		return err
+		return errors.New("Unexpected server answer when starting")
 	}
 
 	sh.streamUp, err = sh.sess.OpenStreamSync()
 	if err != nil {
-		sh.sess.Close(err)
 		return err
 	}
 
@@ -395,35 +414,25 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 
 	buf = make([]byte, sh.downloadChunkSize)
 
-listenLoop:
 	for {
 		if sh.streamDown == nil {
-			sh.sess.Close(errors.New("Stream down is nil"))
-			break listenLoop
+			return errors.New("Stream down is nil")
 		}
 		read, err := io.ReadFull(sh.streamDown, buf)
 		if err != nil {
-			sh.sess.Close(err)
 			return err
 		}
 		if read != sh.downloadChunkSize {
-			err := errors.New("Read does not match downloadChunkSize")
-			sh.sess.Close(err)
-			return err
+			return errors.New("Read does not match downloadChunkSize")
 		}
 		msg := string(buf)
 		splitMsg := strings.Split(msg, "&")
 		if !sh.checkFormatServerData(msg, splitMsg) {
-			err := errors.New("Unexpected format of data packet from server")
-			sh.sess.Close(err)
-			return err
+			return errors.New("Unexpected format of data packet from server")
 		}
 		msgID, _ := strconv.Atoi(splitMsg[1])
-		if err2 := sh.sendAck(msgID); err != nil {
-			println(err2)
-			err := errors.New("Got error when sending ack on down stream")
-			sh.sess.Close(err)
-			return err
+		if err = sh.sendAck(msgID); err != nil {
+			return errors.New("Got error when sending ack on down stream")
 		}
 		// Now perform delay extraction, to avoid adding extra estimated delay
 		sh.delaysLock.Lock()
@@ -431,15 +440,13 @@ listenLoop:
 			durInt, err := strconv.ParseInt(splitMsg[i], 10, 64)
 			if err != nil {
 				sh.delaysLock.Unlock()
-				err := errors.New("Unparseable delay from server")
-				sh.sess.Close(err)
-				return err
+				return errors.New("Unparseable delay from server")
 			}
 			tsD := tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
 			sh.delaysDown = append(sh.delaysDown, tsD)
 			select {
-			case newDown <- tsD:
-			case <-closed: // Yep, we might be stuck in a deadlock otherwise...
+			case sh.newDown <- tsD:
+			case <-sh.closed: // Yep, we might be stuck in a deadlock otherwise...
 			}
 		}
 		sh.delaysLock.Unlock()
@@ -447,6 +454,5 @@ listenLoop:
 		sh.counterDown++
 		sh.counterLock.Unlock()
 	}
-	sh.sess.Close(nil)
 	return nil
 }
