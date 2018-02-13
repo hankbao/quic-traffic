@@ -35,11 +35,17 @@ func Run(cfg common.TrafficConfig) string {
 		CacheHandshake:   cfg.Cache,
 	}
 
+	roundTripper := &h2quic.RoundTripper{
+		QuicConfig:      quicConfig,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	defer roundTripper.Close()
+
 	hclient := &http.Client{
-		Transport: &h2quic.RoundTripper{QuicConfig: quicConfig, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		Transport: roundTripper,
 	}
 
-	pingCount := 1
+	pingCount := 0
 	pingWait := time.Second
 
 	if cfg.PingCount > 0 && cfg.PingWaitMs > 0 {
