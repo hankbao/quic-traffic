@@ -114,7 +114,9 @@ func (sh *serverHandler) closeSession(err error) {
 		// Nothing to do
 	default:
 		close(sh.closed)
-		sh.sess.Close(err)
+		if sh.sess != nil {
+			sh.sess.Close(err)
+		}
 	}
 }
 
@@ -432,7 +434,7 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 		}
 		msgID, _ := strconv.Atoi(splitMsg[1])
 		if err = sh.sendAck(msgID); err != nil {
-			return errors.New("Got error when sending ack on down stream")
+			return err
 		}
 		// Now perform delay extraction, to avoid adding extra estimated delay
 		sh.delaysLock.Lock()
