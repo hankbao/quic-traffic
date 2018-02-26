@@ -85,7 +85,7 @@ func main() {
 
 func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
 	var err error
-	//S&{connID}&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
+	//S&{connID}&{maxID}&{ackSize}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
 	if len(splitMsg) != 8 {
 		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
 		return false
@@ -161,7 +161,7 @@ func parseFirstPacket(tcpConn *net.TCPConn, splitMsg []string) bool {
 			log.Printf("Error when parsing start packet\n")
 			return false
 		}
-		myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
+		myLogPrintf(ch.id, "Start packet ok, %d %d %d %s %d %d %s\n", ch.connID, ch.maxID, ch.ackSize, ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
 		if ch.sendInitialAck() != nil {
 			myLogPrintf(ch.id, "Error when sending initial ack on down connection\n")
 			return false
@@ -186,6 +186,7 @@ func parseFirstPacket(tcpConn *net.TCPConn, splitMsg []string) bool {
 			return false
 		}
 		// It worked! The connection here is the upload one, no need to ACK
+		myLogPrintf(ch.id, "Found upload connection of %d\n", ch.connID)
 		// Remove the ch from clientHandlers to avoid issues
 		delete(clientHandlers, connID)
 		ch.connUpChan <- tcpConn
@@ -202,7 +203,7 @@ func handleFirstPacket(tcpConn *net.TCPConn) {
 
 	buf := make([]byte, InitialBufLen)
 	// FIXME timeout
-	read, err := io.ReadAtLeast(tcpConn, buf, 11)
+	read, err := io.ReadAtLeast(tcpConn, buf, 3)
 	if err != nil {
 		log.Printf("Read error when starting: %v\n", err)
 		return

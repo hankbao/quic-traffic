@@ -19,7 +19,7 @@ import (
 
 /*
   Format start packet of client:
-  S&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
+  S&{maxID}&{ackSize}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
   Format data of client:
   D&{ID}&{SIZE}&{padding}
   Format data of server:
