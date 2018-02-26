@@ -68,6 +68,7 @@ func newClientHandler(connDown *net.TCPConn) *clientHandler {
 	}
 	ch.delays = make([]time.Duration, 0)
 	ch.sentTime = make(map[int]time.Time)
+	ch.connUpChan = make(chan *net.TCPConn)
 	return ch
 }
 
