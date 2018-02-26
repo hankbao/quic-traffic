@@ -25,19 +25,15 @@ const (
 	MinChunkSize  = 20
 )
 
-var (
-	addr = "localhost:4242"
-	// FIXME REMOVEME
-	listener *net.TCPListener
-)
-
 type clientHandler struct {
-	id uint64
+	id     uint64
+	connID uint64
 
 	ackSize              int
 	addr                 string
 	connDown             *net.TCPConn
 	connUp               *net.TCPConn
+	connUpChan           chan *net.TCPConn
 	uploadChunkSize      int
 	downloadChunkSize    int
 	delays               []time.Duration
@@ -50,6 +46,14 @@ type clientHandler struct {
 	sentTime             map[int]time.Time
 	startTime            time.Time
 }
+
+var (
+	addr               = "localhost:4242"
+	clientHandlers     = make(map[uint64]*clientHandler)
+	clientHandlersLock sync.RWMutex
+	// FIXME REMOVE ME
+	listener *net.TCPListener
+)
 
 func myLogPrintf(id uint64, format string, v ...interface{}) {
 	s := fmt.Sprintf("%x: ", id)
@@ -79,6 +83,138 @@ func main() {
 	}
 }
 
+func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
+	var err error
+	//S&{connID}&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
+	if len(splitMsg) != 8 {
+		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
+		return false
+	}
+	if splitMsg[0] != "S" {
+		myLogPrintf(ch.id, "Invalid prefix: %s", splitMsg[0])
+		return false
+	}
+	ch.connID, err = strconv.ParseUint(splitMsg[1], 10, 64)
+	if err != nil {
+		myLogPrintf(ch.id, "Invalid connID: %s", splitMsg[1])
+		return false
+	}
+	ch.maxID, err = strconv.Atoi(splitMsg[2])
+	if err != nil || ch.maxID <= 0 {
+		myLogPrintf(ch.id, "Invalid maxID: %s", splitMsg[2])
+		return false
+	}
+	ch.ackSize, err = strconv.Atoi(splitMsg[3])
+	if err != nil || ch.ackSize != len(strconv.Itoa(ch.maxID-1))+2 {
+		myLogPrintf(ch.id, "Invalid ackSize: %s", splitMsg[3])
+		return false
+	}
+	runTimeInt, err := strconv.ParseInt(splitMsg[4], 10, 64)
+	if err != nil || runTimeInt < 0 {
+		myLogPrintf(ch.id, "Invalid runTime: %s", splitMsg[4])
+		return false
+	}
+	ch.runTime = time.Duration(runTimeInt)
+	ch.uploadChunkSize, err = strconv.Atoi(splitMsg[5])
+	if err != nil || ch.uploadChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid uploadChunkSize: %s", splitMsg[5])
+		return false
+	}
+	ch.downloadChunkSize, err = strconv.Atoi(splitMsg[6])
+	if err != nil || ch.downloadChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid downloadChunkSize: %s", splitMsg[6])
+		return false
+	}
+	downloadIntervalTimeInt, err := strconv.ParseInt(splitMsg[7], 10, 64)
+	if err != nil || downloadIntervalTimeInt <= 0 {
+		myLogPrintf(ch.id, "Invalid downloadIntervalTime: %s with error: %v", splitMsg[7], err)
+		return false
+	}
+	ch.downloadIntervalTime = time.Duration(downloadIntervalTimeInt)
+
+	return true
+}
+
+func parseFirstUploadPacket(splitMsg []string) (uint64, bool) {
+	// U&{connID}
+	if len(splitMsg) != 2 {
+		log.Printf("Invalid size: %d\n", len(splitMsg))
+		return 0, false
+	}
+	if splitMsg[0] != "U" {
+		log.Printf("Invalid prefix: %s\n", splitMsg[0])
+		return 0, false
+	}
+	connID, err := strconv.ParseUint(splitMsg[1], 10, 64)
+	if err != nil {
+		log.Printf("Invalid connID: %s\n", splitMsg[1])
+		return 0, false
+	}
+	return connID, true
+}
+
+func parseFirstPacket(tcpConn *net.TCPConn, splitMsg []string) bool {
+	// First packet either is a start packet (S prefix) or an upload packet (U prefix)
+	if splitMsg[0] == "S" {
+		ch := newClientHandler(tcpConn)
+		if !ch.parseFormatStartPacket(splitMsg) {
+			log.Printf("Error when parsing start packet\n")
+			return false
+		}
+		myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
+		if ch.sendInitialAck() != nil {
+			myLogPrintf(ch.id, "Error when sending initial ack on down connection\n")
+			return false
+		}
+		clientHandlersLock.Lock()
+		clientHandlers[ch.connID] = ch
+		clientHandlersLock.Unlock()
+		go ch.handle()
+		return true
+	}
+	if splitMsg[0] == "U" {
+		connID, ok := parseFirstUploadPacket(splitMsg)
+		if !ok {
+			log.Printf("Error when parsing start packet\n")
+			return false
+		}
+		clientHandlersLock.Lock()
+		defer clientHandlersLock.Unlock()
+		ch, ok := clientHandlers[connID]
+		if !ok {
+			log.Printf("No client handler with connection ID %v\n", connID)
+			return false
+		}
+		// It worked! The connection here is the upload one, no need to ACK
+		// Remove the ch from clientHandlers to avoid issues
+		delete(clientHandlers, connID)
+		ch.connUpChan <- tcpConn
+		close(ch.connUpChan)
+		return true
+	}
+	log.Printf("Unknown prefix for first packet: %v\n", splitMsg[0])
+	return false
+}
+
+func handleFirstPacket(tcpConn *net.TCPConn) {
+	var err error
+	log.Printf("Accept new connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
+
+	buf := make([]byte, InitialBufLen)
+	// FIXME timeout
+	read, err := io.ReadAtLeast(tcpConn, buf, 11)
+	if err != nil {
+		log.Printf("Read error when starting: %v\n", err)
+		return
+	}
+	msg := string(buf[:read])
+	splitMsg := strings.Split(msg, "&")
+	if !parseFirstPacket(tcpConn, splitMsg) {
+		log.Printf("Invalid format for start packet\n")
+		return
+	}
+}
+
 // Start a server that performs similar traffic to Siri servers
 func streamServer() error {
 	mrand.Seed(time.Now().UTC().UnixNano())
@@ -91,13 +227,12 @@ func streamServer() error {
 		return err
 	}
 	for {
-		connDown, err := listener.AcceptTCP()
+		tcpConn, err := listener.AcceptTCP()
 		if err != nil {
 			log.Printf("Got accept error: %v\n", err)
 			continue
 		}
-		ch := newClientHandler(connDown)
-		go ch.handle()
+		go handleFirstPacket(tcpConn)
 	}
 	return err
 }
@@ -137,53 +272,6 @@ func (ch *clientHandler) sendData() error {
 	_, err := ch.connDown.Write([]byte(msg))
 	ch.nxtMessageID = (ch.nxtMessageID + 1) % ch.maxID
 	return err
-}
-
-func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
-	var err error
-	//S&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
-	if len(splitMsg) != 7 {
-		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
-		return false
-	}
-	if splitMsg[0] != "S" {
-		myLogPrintf(ch.id, "Invalid prefix: %s", splitMsg[0])
-		return false
-	}
-	ch.maxID, err = strconv.Atoi(splitMsg[1])
-	if err != nil || ch.maxID <= 0 {
-		myLogPrintf(ch.id, "Invalid maxID: %s", splitMsg[1])
-		return false
-	}
-	ch.ackSize, err = strconv.Atoi(splitMsg[2])
-	if err != nil || ch.ackSize != len(strconv.Itoa(ch.maxID-1))+2 {
-		myLogPrintf(ch.id, "Invalid ackSize: %s", splitMsg[2])
-		return false
-	}
-	runTimeInt, err := strconv.ParseInt(splitMsg[3], 10, 64)
-	if err != nil || runTimeInt < 0 {
-		myLogPrintf(ch.id, "Invalid runTime: %s", splitMsg[2])
-		return false
-	}
-	ch.runTime = time.Duration(runTimeInt)
-	ch.uploadChunkSize, err = strconv.Atoi(splitMsg[4])
-	if err != nil || ch.uploadChunkSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid uploadChunkSize: %s", splitMsg[3])
-		return false
-	}
-	ch.downloadChunkSize, err = strconv.Atoi(splitMsg[5])
-	if err != nil || ch.downloadChunkSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid downloadChunkSize: %s", splitMsg[4])
-		return false
-	}
-	downloadIntervalTimeInt, err := strconv.ParseInt(splitMsg[6], 10, 64)
-	if err != nil || downloadIntervalTimeInt <= 0 {
-		myLogPrintf(ch.id, "Invalid downloadIntervalTime: %s with error: %v", splitMsg[5], err)
-		return false
-	}
-	ch.downloadIntervalTime = time.Duration(downloadIntervalTimeInt)
-
-	return true
 }
 
 func (ch *clientHandler) checkFormatClientData(msg string, splitMsg []string) bool {
@@ -280,38 +368,7 @@ listenLoop:
 }
 
 func (ch *clientHandler) handle() {
-	var err error
-	myLogPrintf(ch.id, "Accept new connection on %v from %v\n", ch.connDown.LocalAddr(), ch.connDown.RemoteAddr())
-
-	buf := make([]byte, InitialBufLen)
-	// FIXME timeout
-	read, err := io.ReadAtLeast(ch.connDown, buf, 11)
-	if err != nil {
-		myLogPrintf(ch.id, "Read error when starting: %v\n", err)
-		return
-	}
-	msg := string(buf[:read])
-	splitMsg := strings.Split(msg, "&")
-	// First collect the parameters of the stream traffic
-	if !ch.parseFormatStartPacket(splitMsg) {
-		myLogPrintf(ch.id, "Invalid format for start packet\n")
-		return
-	}
-
-	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
-	if ch.sendInitialAck() != nil {
-		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
-		return
-	}
-
-	// BUG FIXME TODO
-	ch.connUp, err = listener.AcceptTCP()
-	if err != nil {
-		myLogPrintf(ch.id, "Got accept up stream error: %v\n", err)
-		ch.connDown.Close()
-		return
-	}
-
+	ch.connUp = <-ch.connUpChan
 	ch.startTime = time.Now()
 	go ch.serverSenderDown()
 	go ch.serverReceiverDown()
@@ -319,7 +376,7 @@ func (ch *clientHandler) handle() {
 	if ch.runTime > 0 {
 		ch.connUp.SetDeadline(time.Now().Add(ch.runTime))
 	}
-	buf = make([]byte, ch.uploadChunkSize)
+	buf := make([]byte, ch.uploadChunkSize)
 
 serveLoop:
 	for {
