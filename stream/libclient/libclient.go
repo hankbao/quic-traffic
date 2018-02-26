@@ -238,8 +238,11 @@ func (sh *serverHandler) sendData() error {
 	}
 	startString := "D&" + strconv.Itoa(sh.nxtMessageID) + "&" + strconv.Itoa(sh.uploadChunkSize) + "&"
 	msg := startString + strings.Repeat("0", sh.uploadChunkSize-len(startString))
-	sh.sentTime[sh.nxtMessageID] = time.Now()
+	sentTime := time.Now()
 	_, err := sh.streamUp.Write([]byte(msg))
+	sh.delaysLock.Lock()
+	sh.sentTime[sh.nxtMessageID] = sentTime
+	sh.delaysLock.Unlock()
 	sh.nxtMessageID = (sh.nxtMessageID + 1) % sh.maxID
 	return err
 }
@@ -317,11 +320,12 @@ listenLoop:
 		}
 		ackMsgID, _ := strconv.Atoi(splitMsg[1])
 		ackedMsgID := ackMsgID - 1
+		sh.delaysLock.Lock()
 		sent, ok := sh.sentTime[ackMsgID-1]
 		if !ok {
+			sh.delaysLock.Unlock()
 			continue
 		}
-		sh.delaysLock.Lock()
 		tsD := tsDelay{ts: rcvTime, delay: rcvTime.Sub(sent)}
 		sh.delaysUp = append(sh.delaysUp, tsD)
 		select {

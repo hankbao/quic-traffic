@@ -194,6 +194,7 @@ func parseFirstPacket(tcpConn *net.TCPConn, splitMsg []string) bool {
 		return true
 	}
 	log.Printf("Unknown prefix for first packet: %v\n", splitMsg[0])
+	tcpConn.Close()
 	return false
 }
 
@@ -370,6 +371,7 @@ listenLoop:
 
 func (ch *clientHandler) handle() {
 	ch.connUp = <-ch.connUpChan
+	myLogPrintf(ch.id, "Starting traffic")
 	ch.startTime = time.Now()
 	go ch.serverSenderDown()
 	go ch.serverReceiverDown()
