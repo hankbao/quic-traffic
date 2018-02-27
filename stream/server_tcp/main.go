@@ -119,7 +119,7 @@ func parseFirstUploadPacket(data []byte) (uint64, bool) {
 		return 0, false
 	}
 	if data[4] != 'U' {
-		log.Printf("Invalid prefix: %s", data[4])
+		log.Printf("Invalid prefix: %d", data[4])
 		return 0, false
 	}
 	connID := binary.BigEndian.Uint64(data[5:13])
@@ -287,9 +287,11 @@ func (ch *clientHandler) sendData() error {
 func (ch *clientHandler) checkFormatClientData(data []byte) (uint32, bool) {
 	dataLen := binary.BigEndian.Uint32(data)
 	if dataLen != ch.uploadChunkSize-4 {
+		myLogPrintf(ch.id, "DataLen of %d while expecting %d\n", dataLen, ch.uploadChunkSize)
 		return 0, false
 	}
 	if data[4] != 'D' {
+		myLogPrintf(ch.id, "Prefix is %d while expecting %d\n", data[4], 'D')
 		return 0, false
 	}
 	msgID := binary.BigEndian.Uint32(data[5:9])
