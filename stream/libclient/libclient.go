@@ -334,7 +334,7 @@ listenLoop:
 		}
 		sh.delaysLock.Unlock()
 		delete(sh.sentTime, ackedMsgID)
-		sh.nxtAckMsgID++
+		sh.nxtAckMsgID = (sh.nxtAckMsgID + 1) % sh.maxID
 
 		sh.counterLock.Lock()
 		sh.counterUp++
