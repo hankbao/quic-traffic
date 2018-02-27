@@ -287,7 +287,7 @@ func (ch *clientHandler) sendData() error {
 func (ch *clientHandler) checkFormatClientData(data []byte) (uint32, bool) {
 	dataLen := binary.BigEndian.Uint32(data)
 	if dataLen != ch.uploadChunkSize-4 {
-		myLogPrintf(ch.id, "DataLen of %d while expecting %d\n", dataLen, ch.uploadChunkSize)
+		myLogPrintf(ch.id, "DataLen of %d while expecting %d\n", dataLen, ch.uploadChunkSize-4)
 		return 0, false
 	}
 	if data[4] != 'D' {
