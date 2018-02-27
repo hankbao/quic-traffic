@@ -185,13 +185,11 @@ func Run(cfg common.TrafficConfig) string {
 	sh.initProgressWorker()
 	go sh.progressWorker()
 	err := sh.handle(cfg)
-	fmt.Println("Out of handle")
 	sh.buffer.WriteString(fmt.Sprintf("Exiting client main with error %v\n", err))
 	sh.closeSession(err)
 	handlersLock.Lock()
 	delete(handlers, cfg.NotifyID)
 	handlersLock.Unlock()
-	fmt.Println("Just to print out")
 	return sh.printer()
 }
 
