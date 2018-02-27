@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -13,8 +14,6 @@ import (
 	"log"
 	"math/big"
 	mrand "math/rand"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,18 +32,16 @@ var (
 type clientHandler struct {
 	id uint64
 
-	ackSize              int
 	addr                 string
-	uploadChunkSize      int
-	downloadChunkSize    int
+	uploadChunkSize      uint32
+	downloadChunkSize    uint32
 	delays               []time.Duration
 	delaysLock           sync.Mutex
 	downloadIntervalTime time.Duration
-	maxID                int
-	nxtAckMsgID          int
-	nxtMessageID         int
+	nxtAckMsgID          uint32
+	nxtMessageID         uint32
 	runTime              time.Duration
-	sentTime             map[int]time.Time
+	sentTime             map[uint32]time.Time
 	sess                 quic.Session
 	startTime            time.Time
 	streamDown           quic.Stream
@@ -63,7 +60,7 @@ func newClientHandler(sess quic.Session) *clientHandler {
 		nxtAckMsgID: 1,
 	}
 	ch.delays = make([]time.Duration, 0)
-	ch.sentTime = make(map[int]time.Time)
+	ch.sentTime = make(map[uint32]time.Time)
 	return ch
 }
 
@@ -98,108 +95,102 @@ func streamServer() error {
 	return err
 }
 
+// [Length(4)|'A'(1)|ackMsgID(4)]
 func (ch *clientHandler) sendInitialAck() error {
 	if ch.streamDown == nil {
 		return errors.New("Closed down stream")
 	}
-	_, err := ch.streamDown.Write([]byte("A&0"))
+	data := make([]byte, 9)
+	binary.BigEndian.PutUint32(data, 5)
+	data[4] = 'A'
+	binary.BigEndian.PutUint32(data[5:9], 0)
+	_, err := ch.streamDown.Write(data)
 	return err
 }
 
-func (ch *clientHandler) sendAck(msgID int) error {
+// [Length(4)|'A'(1)|ackMsgID(4)]
+func (ch *clientHandler) sendAck(msgID uint32) error {
 	if ch.streamUp == nil {
 		return errors.New("Closed up stream")
 	}
-	msgIDStr := strconv.Itoa(msgID + 1)
-	msg := "A&" + strings.Repeat("0", ch.ackSize-2-len(msgIDStr)) + msgIDStr
-	_, err := ch.streamUp.Write([]byte(msg))
+	data := make([]byte, 9)
+	binary.BigEndian.PutUint32(data, 5)
+	data[4] = 'A'
+	binary.BigEndian.PutUint32(data[5:9], msgID+1)
+	_, err := ch.streamUp.Write(data)
 	return err
 }
 
+// [Length(4)|'D'(1)|msgID(4)|NumDelays(4)|{list of previous delays (8)}|padding]
 func (ch *clientHandler) sendData() error {
 	if ch.streamDown == nil {
 		return errors.New("Closed down stream")
 	}
+	data := make([]byte, ch.downloadChunkSize)
+	binary.BigEndian.PutUint32(data, ch.downloadChunkSize-4)
+	data[4] = 'D'
+	binary.BigEndian.PutUint32(data[5:9], ch.nxtMessageID)
+	i := 0
 	ch.delaysLock.Lock()
-	startString := "D&" + strconv.Itoa(ch.nxtMessageID) + "&" + strconv.Itoa(ch.uploadChunkSize) + "&"
-	delaysStr := ""
 	for _, d := range ch.delays {
-		delaysStr += strconv.FormatInt(int64(d), 10) + "&"
+		startIndex := 13 + i*8
+		if uint32(startIndex) <= ch.downloadChunkSize-8 {
+			binary.BigEndian.PutUint64(data[startIndex:startIndex+8], uint64(d))
+			i++
+		}
 	}
 	ch.delays = ch.delays[:0]
 	ch.delaysLock.Unlock()
-	msg := startString + delaysStr + strings.Repeat("0", ch.uploadChunkSize-len(startString)-len(delaysStr))
+	// Don't forget to indicate how many delays were written
+	binary.BigEndian.PutUint32(data[9:13], uint32(i))
+
 	ch.sentTime[ch.nxtMessageID] = time.Now()
-	_, err := ch.streamDown.Write([]byte(msg))
-	ch.nxtMessageID = (ch.nxtMessageID + 1) % ch.maxID
+	_, err := ch.streamDown.Write(data)
+	ch.nxtMessageID++
 	return err
 }
 
-func (ch *clientHandler) parseFormatStartPacket(splitMsg []string) bool {
-	var err error
-	//S&{maxID}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
-	if len(splitMsg) != 7 {
-		myLogPrintf(ch.id, "Invalid size: %d", len(splitMsg))
+// [Length(4)|'S'(1)|runTimeNs(8)|uploadChunkSize(4)|downloadChunkSize(4)|downloadIntervalTimeNs(8)]
+func (ch *clientHandler) parseFormatStartPacket(data []byte) bool {
+	startLen := binary.BigEndian.Uint32(data)
+	if startLen != 25 {
+		myLogPrintf(ch.id, "Invalid size: %d", startLen)
 		return false
 	}
-	if splitMsg[0] != "S" {
-		myLogPrintf(ch.id, "Invalid prefix: %s", splitMsg[0])
+	if data[4] != 'S' {
+		myLogPrintf(ch.id, "Invalid prefix: %s", data[4])
 		return false
 	}
-	ch.maxID, err = strconv.Atoi(splitMsg[1])
-	if err != nil || ch.maxID <= 0 {
-		myLogPrintf(ch.id, "Invalid maxID: %s", splitMsg[1])
+	runTimeNs := binary.BigEndian.Uint64(data[5:13])
+	ch.runTime = time.Duration(runTimeNs)
+	ch.uploadChunkSize = binary.BigEndian.Uint32(data[13:17])
+	if ch.uploadChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid uploadChunkSize: %d", ch.uploadChunkSize)
 		return false
 	}
-	ch.ackSize, err = strconv.Atoi(splitMsg[2])
-	if err != nil || ch.ackSize != len(strconv.Itoa(ch.maxID-1))+2 {
-		myLogPrintf(ch.id, "Invalid ackSize: %s", splitMsg[2])
+	ch.downloadChunkSize = binary.BigEndian.Uint32(data[17:21])
+	if ch.downloadChunkSize < MinChunkSize {
+		myLogPrintf(ch.id, "Invalid downloadChunkSize: %d", ch.downloadChunkSize)
 		return false
 	}
-	runTimeInt, err := strconv.ParseInt(splitMsg[3], 10, 64)
-	if err != nil || runTimeInt < 0 {
-		myLogPrintf(ch.id, "Invalid runTime: %s", splitMsg[2])
-		return false
-	}
-	ch.runTime = time.Duration(runTimeInt)
-	ch.uploadChunkSize, err = strconv.Atoi(splitMsg[4])
-	if err != nil || ch.uploadChunkSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid uploadChunkSize: %s", splitMsg[3])
-		return false
-	}
-	ch.downloadChunkSize, err = strconv.Atoi(splitMsg[5])
-	if err != nil || ch.downloadChunkSize < MinChunkSize {
-		myLogPrintf(ch.id, "Invalid downloadChunkSize: %s", splitMsg[4])
-		return false
-	}
-	downloadIntervalTimeInt, err := strconv.ParseInt(splitMsg[6], 10, 64)
-	if err != nil || downloadIntervalTimeInt <= 0 {
-		myLogPrintf(ch.id, "Invalid downloadIntervalTime: %s with error: %v", splitMsg[5], err)
-		return false
-	}
-	ch.downloadIntervalTime = time.Duration(downloadIntervalTimeInt)
+	downloadIntervalTimeNs := binary.BigEndian.Uint64(data[21:29])
+	ch.downloadIntervalTime = time.Duration(downloadIntervalTimeNs)
 
 	return true
 }
 
-func (ch *clientHandler) checkFormatClientData(msg string, splitMsg []string) bool {
-	// D&{ID}&{SIZE}&{padding}
-	if len(splitMsg) < 4 {
-		return false
+// [Length(4)|'D'(1)|msgID(4)|padding]
+func (ch *clientHandler) checkFormatClientData(data []byte) (uint32, bool) {
+	dataLen := binary.BigEndian.Uint32(data)
+	if dataLen != ch.uploadChunkSize-4 {
+		return 0, false
 	}
-	if splitMsg[0] != "D" {
-		return false
+	if data[4] != 'D' {
+		return 0, false
 	}
-	msgID, err := strconv.Atoi(splitMsg[1])
-	if err != nil || msgID < 0 || msgID >= ch.maxID {
-		return false
-	}
-	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != ch.uploadChunkSize {
-		return false
-	}
+	msgID := binary.BigEndian.Uint32(data[5:9])
 
-	return true
+	return msgID, true
 }
 
 func (ch *clientHandler) serverSenderDown() {
@@ -226,26 +217,30 @@ sendLoop:
 	}
 }
 
-func (ch *clientHandler) checkFormatClientAck(splitMsg []string) bool {
-	if len(splitMsg) != 2 {
-		myLogPrintf(ch.id, "Wrong size: %d", len(splitMsg))
-		return false
+// [Length(4)|'A'(1)|msgID (4)]
+func (ch *clientHandler) checkFormatClientAck(data []byte) (uint32, bool) {
+	ackLen := binary.BigEndian.Uint32(data)
+	if ackLen != 5 {
+		myLogPrintf(ch.id, "Wrong ACK size: %d", ackLen)
+		return 0, false
 	}
-	if splitMsg[0] != "A" {
-		myLogPrintf(ch.id, "Wrong prefix: %s", splitMsg[0])
-		return false
-	}
-	ackMsgID, err := strconv.Atoi(splitMsg[1])
-	if err != nil || ackMsgID != ch.nxtAckMsgID {
-		myLogPrintf(ch.id, "Wrong ackMsgID: %s, expected %d", splitMsg[1], ch.nxtAckMsgID)
-		return false
+	if data[4] != 'A' {
+		myLogPrintf(ch.id, "Wrong prefix: %s", data[4])
+		return 0, false
 	}
 
-	return true
+	ackMsgID := binary.BigEndian.Uint32(data[5:9])
+	if ackMsgID != ch.nxtAckMsgID {
+		myLogPrintf(ch.id, "Wrong ackMsgID: %d, expected %d", ackMsgID, ch.nxtAckMsgID)
+		return ackMsgID, false
+	}
+
+	return ackMsgID, true
 }
 
 func (ch *clientHandler) serverReceiverDown() {
-	buf := make([]byte, ch.ackSize)
+	// An ACK is 9 byte long
+	buf := make([]byte, 9)
 listenLoop:
 	for {
 		if ch.streamDown == nil {
@@ -253,23 +248,21 @@ listenLoop:
 			ch.sess.Close(errors.New("Closed down stream"))
 			break listenLoop
 		}
-		read, err := io.ReadFull(ch.streamDown, buf)
+		_, err := io.ReadFull(ch.streamDown, buf)
 		rcvTime := time.Now()
 		if err != nil {
 			myLogPrintf(ch.id, "Error when reading acks in down stream: %v\n", err)
 			ch.sess.Close(err)
 			break listenLoop
 		}
-		msg := string(buf[:read])
-		splitMsg := strings.Split(msg, "&")
-		if !ch.checkFormatClientAck(splitMsg) {
+		ackMsgID, ok := ch.checkFormatClientAck(buf)
+		if !ok {
 			myLogPrintf(ch.id, "Error with ack format from client in down\n")
 			ch.sess.Close(errors.New("Error with ack format from client in down"))
 			break listenLoop
 		}
-		ackMsgID, _ := strconv.Atoi(splitMsg[1])
 		ackedMsgID := ackMsgID - 1
-		sent, ok := ch.sentTime[ackMsgID-1]
+		sent, ok := ch.sentTime[ackedMsgID]
 		if !ok {
 			continue
 		}
@@ -291,24 +284,31 @@ func (ch *clientHandler) handle() {
 		return
 	}
 
-	buf := make([]byte, InitialBufLen)
+	bufLen := make([]byte, 4)
 	// FIXME timeout
-	read, err := io.ReadAtLeast(ch.streamDown, buf, 11)
+	_, err = io.ReadFull(ch.streamDown, bufLen)
 	if err != nil {
 		myLogPrintf(ch.id, "Read error when starting: %v\n", err)
 		ch.sess.Close(err)
 		return
 	}
-	msg := string(buf[:read])
-	splitMsg := strings.Split(msg, "&")
+	bufLength := binary.BigEndian.Uint32(bufLen)
+	buf := make([]byte, bufLength)
+	_, err = io.ReadFull(ch.streamDown, buf)
+	if err != nil {
+		myLogPrintf(ch.id, "Read error when starting: %v\n", err)
+		ch.sess.Close(err)
+		return
+	}
+	data := append(bufLen, buf...)
 	// First collect the parameters of the stream traffic
-	if !ch.parseFormatStartPacket(splitMsg) {
+	if !ch.parseFormatStartPacket(data) {
 		myLogPrintf(ch.id, "Invalid format for start packet\n")
 		ch.sess.Close(errors.New("Invalid format for start packet"))
 		return
 	}
 
-	myLogPrintf(ch.id, "Start packet ok, %d %d %s %d %d %s\n", ch.maxID, ch.ackSize, ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
+	myLogPrintf(ch.id, "Start packet ok, %s %d %d %s\n", ch.runTime, ch.uploadChunkSize, ch.downloadChunkSize, ch.downloadIntervalTime)
 	if ch.sendInitialAck() != nil {
 		myLogPrintf(ch.id, "Error when sending initial ack on down stream\n")
 		ch.sess.Close(errors.New("Error when sending initial ack on down stream"))
@@ -339,19 +339,17 @@ serveLoop:
 			ch.sess.Close(err)
 			break serveLoop
 		}
-		if read != ch.uploadChunkSize {
+		if read != int(ch.uploadChunkSize) {
 			myLogPrintf(ch.id, "Did not read the expected size on up stream; %d != %d\n", read, ch.uploadChunkSize)
 			ch.sess.Close(errors.New("Did not read the expected size on up stream"))
 			break serveLoop
 		}
-		msg := string(buf)
-		splitMsg := strings.Split(msg, "&")
-		if !ch.checkFormatClientData(msg, splitMsg) {
+		msgID, ok := ch.checkFormatClientData(buf)
+		if !ok {
 			myLogPrintf(ch.id, "Unexpected format of data packet from client")
 			ch.sess.Close(errors.New("Unexpected format of data packet from client"))
 			break serveLoop
 		}
-		msgID, _ := strconv.Atoi(splitMsg[1])
 		if err = ch.sendAck(msgID); err != nil {
 			myLogPrintf(ch.id, "Encountered error when sending ACK on up stream: %v\n")
 			ch.sess.Close(err)

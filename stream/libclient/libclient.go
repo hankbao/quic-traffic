@@ -3,12 +3,12 @@ package libclient
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,14 +18,16 @@ import (
 )
 
 /*
+	/!\ Length does not includes itself, so a packet has always a min length of 4 bytes
+
   Format start packet of client:
-  S&{maxID}&{ackSize}&{runTime}&{uploadChunkSize}&{downloadChunkSize}&{downloadIntervalTime}
+  [Length(4)|'S'(1)|runTimeNs(8)|uploadChunkSize(4)|downloadChunkSize(4)|downloadIntervalTimeNs(8)]
   Format data of client:
-  D&{ID}&{SIZE}&{padding}
+  [Length(4)|'D'(1)|msgID(4)|padding]
   Format data of server:
-  D&{ID}&{SIZE}&{list of previous delays ended by &}{padding}
+  [Length(4)|'D'(1)|msgID(4)|NumDelays(4)|{list of previous delays (8)}|padding]
   Format ACK:
-  A&{next ID waited}
+  [Length(4)|'A'(1)|msgID (4)]
 */
 
 const (
@@ -40,11 +42,10 @@ type tsDelay struct {
 }
 
 type serverHandler struct {
-	ackSize              int
 	addr                 string
 	buffer               *bytes.Buffer
-	uploadChunkSize      int
-	downloadChunkSize    int
+	uploadChunkSize      uint32
+	downloadChunkSize    uint32
 	counterDown          int
 	counterUp            int
 	counterLock          sync.Mutex
@@ -53,12 +54,11 @@ type serverHandler struct {
 	delaysLock           sync.Mutex
 	uploadIntervalTime   time.Duration
 	downloadIntervalTime time.Duration
-	maxID                int
-	nxtAckMsgID          int
-	nxtMessageID         int
+	nxtAckMsgID          uint32
+	nxtMessageID         uint32
 	printChan            chan struct{}
 	runTime              time.Duration
-	sentTime             map[int]time.Time
+	sentTime             map[uint32]time.Time
 	sess                 quic.Session
 	startTime            time.Time
 	streamDown           quic.Stream
@@ -171,8 +171,7 @@ func Run(cfg common.TrafficConfig) string {
 		delaysUp:             make([]tsDelay, 0),
 		printChan:            make(chan struct{}, 1),
 		runTime:              cfg.RunTime,
-		sentTime:             make(map[int]time.Time),
-		maxID:                maxIDCst,
+		sentTime:             make(map[uint32]time.Time),
 		uploadIntervalTime:   uploadIntervalTimeCst,
 		downloadIntervalTime: downloadIntervalTimeCst,
 		uploadChunkSize:      2000,
@@ -182,7 +181,6 @@ func Run(cfg common.TrafficConfig) string {
 	handlersLock.Lock()
 	handlers[cfg.NotifyID] = sh
 	handlersLock.Unlock()
-	sh.ackSize = 2 + len(strconv.Itoa(sh.maxID-1))
 	sh.printChan <- struct{}{}
 	sh.initProgressWorker()
 	go sh.progressWorker()
@@ -222,37 +220,50 @@ func (sh *serverHandler) printer() string {
 	return sh.buffer.String()
 }
 
-func (sh *serverHandler) sendAck(msgID int) error {
+// [Length(4)|'A'(1)|msgID (4)]
+func (sh *serverHandler) sendAck(msgID uint32) error {
 	if sh.streamDown == nil {
 		return errors.New("Closed down stream")
 	}
-	msgIDStr := strconv.Itoa(msgID + 1)
-	msg := "A&" + strings.Repeat("0", sh.ackSize-2-len(msgIDStr)) + msgIDStr
-	_, err := sh.streamDown.Write([]byte(msg))
+	data := make([]byte, 9)
+	binary.BigEndian.PutUint32(data, 5)
+	data[4] = 'A'
+	binary.BigEndian.PutUint32(data[5:9], msgID+1)
+	_, err := sh.streamDown.Write(data)
 	return err
 }
 
+// [Length(4)|'D'(1)|msgID(4)|padding]
 func (sh *serverHandler) sendData() error {
 	if sh.streamUp == nil {
 		return errors.New("Closed up stream")
 	}
-	startString := "D&" + strconv.Itoa(sh.nxtMessageID) + "&" + strconv.Itoa(sh.uploadChunkSize) + "&"
-	msg := startString + strings.Repeat("0", sh.uploadChunkSize-len(startString))
+	data := make([]byte, sh.uploadChunkSize)
+	binary.BigEndian.PutUint32(data, sh.uploadChunkSize-4)
+	data[4] = 'D'
+	binary.BigEndian.PutUint32(data[5:9], sh.nxtMessageID)
 	sentTime := time.Now()
-	_, err := sh.streamUp.Write([]byte(msg))
+	_, err := sh.streamUp.Write(data)
 	sh.delaysLock.Lock()
 	sh.sentTime[sh.nxtMessageID] = sentTime
 	sh.delaysLock.Unlock()
-	sh.nxtMessageID = (sh.nxtMessageID + 1) % sh.maxID
+	sh.nxtMessageID++
 	return err
 }
 
+// [Length(4)|'S'(1)|runTimeNs(8)|uploadChunkSize(4)|downloadChunkSize(4)|downloadIntervalTimeNs(8)]
 func (sh *serverHandler) sendStartPkt() error {
 	if sh.streamDown == nil {
 		return errors.New("Closed up stream")
 	}
-	msg := "S&" + strconv.Itoa(sh.maxID) + "&" + strconv.Itoa(sh.ackSize) + "&" + strconv.FormatInt(int64(sh.runTime), 10) + "&" + strconv.Itoa(sh.uploadChunkSize) + "&" + strconv.Itoa(sh.downloadChunkSize) + "&" + strconv.FormatInt(int64(sh.downloadIntervalTime), 10)
-	_, err := sh.streamDown.Write([]byte(msg))
+	data := make([]byte, 29)
+	binary.BigEndian.PutUint32(data, 25)
+	data[4] = 'S'
+	binary.BigEndian.PutUint64(data[5:13], uint64(sh.runTime))
+	binary.BigEndian.PutUint32(data[13:17], sh.uploadChunkSize)
+	binary.BigEndian.PutUint32(data[17:21], sh.downloadChunkSize)
+	binary.BigEndian.PutUint64(data[21:29], uint64(sh.downloadIntervalTime))
+	_, err := sh.streamDown.Write(data)
 	return err
 }
 
@@ -278,26 +289,29 @@ sendLoop:
 	}
 }
 
-func (sh *serverHandler) checkFormatServerAck(splitMsg []string) bool {
-	if len(splitMsg) != 2 {
-		fmt.Println("Wrong size:", len(splitMsg))
-		return false
+// [Length(4)|'A'(1)|ackMsgID(4)]
+func (sh *serverHandler) checkFormatServerAck(data []byte) (uint32, bool) {
+	lenAck := binary.BigEndian.Uint32(data)
+	if lenAck != 5 {
+		fmt.Println("Wrong size:", lenAck)
+		return 0, false
 	}
-	if splitMsg[0] != "A" {
-		fmt.Println("Wrong prefix:", splitMsg[0])
-		return false
+	if data[4] != 'A' {
+		fmt.Println("Wrong prefix:", data[4])
+		return 0, false
 	}
-	ackMsgID, err := strconv.Atoi(splitMsg[1])
-	if err != nil || ackMsgID != sh.nxtAckMsgID {
-		fmt.Println("Wrong ack num:", splitMsg[1], "but expects", sh.nxtAckMsgID)
-		return false
+	ackMsgID := binary.BigEndian.Uint32(data[5:9])
+	if ackMsgID != sh.nxtAckMsgID {
+		fmt.Println("Wrong ack num:", ackMsgID, "but expects", sh.nxtAckMsgID)
+		return ackMsgID, false
 	}
 
-	return true
+	return ackMsgID, true
 }
 
 func (sh *serverHandler) clientReceiverUp() {
-	buf := make([]byte, sh.ackSize)
+	// The ACK size should always be 9
+	buf := make([]byte, 9)
 	// 0 has been done previously
 	sh.nxtAckMsgID = 1
 	//var err error
@@ -307,18 +321,16 @@ listenLoop:
 			//err = errors.New("No up stream")
 			break listenLoop
 		}
-		read, err := io.ReadFull(sh.streamUp, buf)
+		_, err := io.ReadFull(sh.streamUp, buf)
 		rcvTime := time.Now()
 		if err != nil {
 			break listenLoop
 		}
-		msg := string(buf[:read])
-		splitMsg := strings.Split(msg, "&")
-		if !sh.checkFormatServerAck(splitMsg) {
+		ackMsgID, ok := sh.checkFormatServerAck(buf)
+		if !ok {
 			err = errors.New("Invalid format of ack from server in up stream")
 			break listenLoop
 		}
-		ackMsgID, _ := strconv.Atoi(splitMsg[1])
 		ackedMsgID := ackMsgID - 1
 		sh.delaysLock.Lock()
 		sent, ok := sh.sentTime[ackMsgID-1]
@@ -334,7 +346,7 @@ listenLoop:
 		}
 		sh.delaysLock.Unlock()
 		delete(sh.sentTime, ackedMsgID)
-		sh.nxtAckMsgID = (sh.nxtAckMsgID + 1) % sh.maxID
+		sh.nxtAckMsgID++
 
 		sh.counterLock.Lock()
 		sh.counterUp++
@@ -342,24 +354,20 @@ listenLoop:
 	}
 }
 
-func (sh *serverHandler) checkFormatServerData(msg string, splitMsg []string) bool {
-	//D&{ID}&{SIZE}&{list of previous delays ended by &}{padding}
-	if len(splitMsg) < 4 {
-		return false
+// [Length(4)|'D'(1)|msgID(4)|NumDelays(4)|{list of previous delays (8)}|padding]
+func (sh *serverHandler) checkFormatServerData(data []byte) (uint32, bool) {
+	lenData := binary.BigEndian.Uint32(data)
+	if lenData != sh.downloadChunkSize-4 {
+		print(lenData, sh.downloadChunkSize-4)
+		return 0, false
 	}
-	if splitMsg[0] != "D" {
-		return false
+	if data[4] != 'D' {
+		print(data[4])
+		return 0, false
 	}
-	msgID, err := strconv.Atoi(splitMsg[1])
-	if err != nil || msgID < 0 || msgID >= sh.maxID {
-		return false
-	}
-	size, err := strconv.Atoi(splitMsg[2])
-	if err != nil || size != sh.downloadChunkSize {
-		return false
-	}
+	msgID := binary.BigEndian.Uint32(data[5:9])
 
-	return true
+	return msgID, true
 }
 
 func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
@@ -391,15 +399,22 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 		return errors.New("Experienced error when sending start packet")
 	}
 
-	buf := make([]byte, 3)
+	buf := make([]byte, 9)
 	// FIXME timeout
 	_, err = io.ReadFull(sh.streamDown, buf)
 	if err != nil {
 		return errors.New("Read error when starting")
 	}
-	msg := string(buf)
-	if msg != "A&0" {
-		return errors.New("Unexpected server answer when starting")
+	ackLen := binary.BigEndian.Uint32(buf)
+	if ackLen != 5 {
+		return errors.New("Unexpected ack length for initial ack")
+	}
+	if buf[4] != 'A' {
+		return errors.New("Unexpected prefix for initial ack")
+	}
+	msgID := binary.BigEndian.Uint32(buf[5:9])
+	if msgID != 0 {
+		return errors.New("Unexpected message ID for initial ack: " + strconv.Itoa(int(msgID)))
 	}
 
 	sh.streamUp, err = sh.sess.OpenStreamSync()
@@ -418,37 +433,41 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 		sh.streamDown.SetDeadline(time.Now().Add(sh.runTime))
 	}
 
-	buf = make([]byte, sh.downloadChunkSize)
+	bufLen := make([]byte, 4)
+	buf = make([]byte, sh.downloadChunkSize-4)
 
 	for {
 		if sh.streamDown == nil {
 			return errors.New("Stream down is nil")
 		}
+		_, err := io.ReadFull(sh.streamDown, bufLen)
+		if err != nil {
+			return err
+		}
+		toRead := binary.BigEndian.Uint32(bufLen)
 		read, err := io.ReadFull(sh.streamDown, buf)
 		if err != nil {
 			return err
 		}
-		if read != sh.downloadChunkSize {
-			return errors.New("Read does not match downloadChunkSize")
+		if read != int(toRead) {
+			println(read, toRead)
+			return errors.New("Length field does not match the read amount of bytes")
 		}
-		msg := string(buf)
-		splitMsg := strings.Split(msg, "&")
-		if !sh.checkFormatServerData(msg, splitMsg) {
+		data := append(bufLen, buf...)
+		msgID, ok := sh.checkFormatServerData(data)
+		if !ok {
 			return errors.New("Unexpected format of data packet from server")
 		}
-		msgID, _ := strconv.Atoi(splitMsg[1])
 		if err = sh.sendAck(msgID); err != nil {
 			return err
 		}
 		// Now perform delay extraction, to avoid adding extra estimated delay
 		sh.delaysLock.Lock()
-		for i := 3; i < len(splitMsg)-1; i++ {
-			durInt, err := strconv.ParseInt(splitMsg[i], 10, 64)
-			if err != nil {
-				sh.delaysLock.Unlock()
-				return errors.New("Unparseable delay from server")
-			}
-			tsD := tsDelay{ts: time.Now(), delay: time.Duration(durInt)}
+		numDelays := binary.BigEndian.Uint32(data[9:13])
+		for i := 0; i < int(numDelays); i++ {
+			startIndex := 13 + 8*i
+			delayNs := binary.BigEndian.Uint64(data[startIndex : startIndex+8])
+			tsD := tsDelay{ts: time.Now(), delay: time.Duration(delayNs)}
 			sh.delaysDown = append(sh.delaysDown, tsD)
 			select {
 			case sh.newDown <- tsD:
