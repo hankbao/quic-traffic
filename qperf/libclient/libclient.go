@@ -1,16 +1,11 @@
 package libclient
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
+	"encoding/binary"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"math/big"
 	"os"
 	"strings"
 	"time"
@@ -21,21 +16,33 @@ import (
 	utils "bitbucket.org/qdeconinck/quic-traffic/utils"
 )
 
-var (
-	addr       = "localhost:4242"
-	download   = false
-	multipath  = false
+type serverHandler struct {
+	download   bool
 	timer      *utils.Timer
 	readChan   chan int
-	ret        string
+	runTime    time.Duration
+	startTime  time.Time
 	stopChan   chan struct{}
 	stream     quic.Stream
 	streamMeta quic.Stream
+}
+
+var (
+	addr = "localhost:4242"
+	ret  string
 )
 
 const (
 	BufLen = 8000000
 )
+
+func newServerHandler(runTime time.Duration) *serverHandler {
+	ch := &serverHandler{}
+	ch.readChan = make(chan int, 10)
+	ch.stopChan = make(chan struct{})
+	ch.runTime = runTime
+	return ch
+}
 
 // We start a server echoing data on the first stream the client opens,
 // then connect with a client, send the message, and wait for its receipt.
@@ -62,8 +69,8 @@ func Run(cfg common.TrafficConfig) string {
 	var err error
 
 	// FIXME not collecting download. This is make on purpose: traffic is not ready yet...
-
-	err = iperfClient(quicConfig, cfg.RunTime)
+	sh := newServerHandler(cfg.RunTime)
+	err = sh.iperfClient(quicConfig)
 
 	if err != nil {
 		return err.Error()
@@ -72,79 +79,82 @@ func Run(cfg common.TrafficConfig) string {
 	return ret
 }
 
-func printIntervalLine(startTime time.Time, lastTotalSent quic.ByteCount, lastTotalRetrans quic.ByteCount) (quic.ByteCount, quic.ByteCount) {
-	elapsed := time.Since(startTime)
-	totalSent := stream.GetBytesSent()
-	totalRetrans := stream.GetBytesRetrans()
+func (sh *serverHandler) printIntervalLine(lastTotalSent quic.ByteCount, lastTotalRetrans quic.ByteCount) (quic.ByteCount, quic.ByteCount) {
+	elapsed := time.Since(sh.startTime)
+	totalSent := sh.stream.GetBytesSent()
+	totalRetrans := sh.stream.GetBytesRetrans()
 	if elapsed != 0 {
-		ret += fmt.Sprintf("%d-%d %d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, totalSent-lastTotalSent, totalSent*1000000000/quic.ByteCount(time.Since(startTime)/time.Nanosecond), totalRetrans-lastTotalRetrans)
+		ret += fmt.Sprintf("%d-%d %d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, totalSent-lastTotalSent, totalSent*1000000000/quic.ByteCount(time.Since(sh.startTime)/time.Nanosecond), totalRetrans-lastTotalRetrans)
 	}
 	return totalSent, totalRetrans
 }
 
-func clientBandwidthTracker(startTime time.Time) {
+func (sh *serverHandler) clientBandwidthTracker() {
 	var lastTotalSent quic.ByteCount
 	var lastTotalRetrans quic.ByteCount
 	ret += fmt.Sprintf("IntervalInSec TransferredLastSecond GlobalBandwidth RetransmittedLastSecond\n")
-	timer = utils.NewTimer()
-	timer.Reset(startTime.Add(time.Second))
+	sh.timer = utils.NewTimer()
+	sh.timer.Reset(sh.startTime.Add(time.Second))
 	for {
 		select {
-		case <-stopChan:
-			totalSent, totalRetrans := printIntervalLine(startTime, lastTotalSent, lastTotalRetrans)
+		case <-sh.stopChan:
+			totalSent, totalRetrans := sh.printIntervalLine(lastTotalSent, lastTotalRetrans)
 			ret += fmt.Sprintf("- - - - - - - - - - - - - - -\n")
-			ret += fmt.Sprintf("totalSent %d duration %s totalRetrans %d\n", totalSent, time.Since(startTime), totalRetrans)
+			ret += fmt.Sprintf("totalSent %d duration %s totalRetrans %d\n", totalSent, time.Since(sh.startTime), totalRetrans)
 			return
-		case <-timer.Chan():
-			timer.SetRead()
-			lastTotalSent, lastTotalRetrans = printIntervalLine(startTime, lastTotalSent, lastTotalRetrans)
-			timer.Reset(time.Now().Add(time.Second))
+		case <-sh.timer.Chan():
+			sh.timer.SetRead()
+			lastTotalSent, lastTotalRetrans = sh.printIntervalLine(lastTotalSent, lastTotalRetrans)
+			sh.timer.Reset(time.Now().Add(time.Second))
 			break
 		}
 	}
 }
 
-func iperfClient(quicConfig *quic.Config, maxTime time.Duration) error {
+func (sh *serverHandler) iperfClient(quicConfig *quic.Config) error {
 	session, err := quic.DialAddr(addr, &tls.Config{InsecureSkipVerify: true}, quicConfig)
 	if err != nil {
 		return err
 	}
 
-	stream, err = session.OpenStreamSync()
+	sh.stream, err = session.OpenStreamSync()
 	if err != nil {
 		return err
 	}
 
-	streamMeta, err = session.OpenStreamSync()
+	sh.streamMeta, err = session.OpenStreamSync()
 	if err != nil {
 		return err
 	}
 
-	if download {
-		streamMeta.Write([]byte("D"))
+	data := make([]byte, 9)
+	if sh.download {
+		data[0] = 'D'
 	} else {
-		streamMeta.Write([]byte("U"))
+		data[0] = 'U'
 	}
+	binary.BigEndian.PutUint64(data[1:9], uint64(sh.runTime))
+	sh.streamMeta.Write(data)
 
 	message := strings.Repeat("0123456789", 400000)
-	startTime := time.Now()
-	go clientBandwidthTracker(startTime)
-	stopChan = make(chan struct{})
-	stream.SetDeadline(time.Now().Add(maxTime))
+	sh.startTime = time.Now()
+	go sh.clientBandwidthTracker()
+	sh.stopChan = make(chan struct{})
+	sh.stream.SetDeadline(time.Now().Add(sh.runTime))
 
 	for {
-		elapsed := time.Since(startTime)
-		if elapsed >= maxTime {
-			stopChan <- struct{}{}
-			stream.Close()
+		elapsed := time.Since(sh.startTime)
+		if elapsed >= sh.runTime {
+			sh.stopChan <- struct{}{}
+			sh.stream.Close()
 			time.Sleep(time.Second)
 			return nil
 		}
-		_, err := stream.Write([]byte(message))
+		_, err := sh.stream.Write([]byte(message))
 		if err != nil {
 			if err.Error() == "deadline exceeded" {
 				// Let the time to the test to end
-				stopChan <- struct{}{}
+				sh.stopChan <- struct{}{}
 				time.Sleep(time.Second)
 				return nil
 			}
@@ -153,33 +163,4 @@ func iperfClient(quicConfig *quic.Config, maxTime time.Duration) error {
 	}
 
 	return nil
-}
-
-// A wrapper for io.Writer that also logs the message.
-type loggingWriter struct{ io.Writer }
-
-func (w loggingWriter) Write(b []byte) (int, error) {
-	fmt.Printf("Server: Got '%s'\n", string(b))
-	return w.Writer.Write(b)
-}
-
-// Setup a bare-bones TLS config for the server
-func generateTLSConfig() *tls.Config {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		panic(err)
-	}
-	template := x509.Certificate{SerialNumber: big.NewInt(1)}
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	if err != nil {
-		panic(err)
-	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-
-	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		panic(err)
-	}
-	return &tls.Config{Certificates: []tls.Certificate{tlsCert}}
 }

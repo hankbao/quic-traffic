@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"flag"
 	"fmt"
@@ -110,11 +111,14 @@ func iperfClient(maxTime time.Duration) error {
 		return err
 	}
 
+	data := make([]byte, 9)
 	if download {
-		streamMeta.Write([]byte("D"))
+		data[0] = 'D'
 	} else {
-		streamMeta.Write([]byte("U"))
+		data[0] = 'U'
 	}
+	binary.BigEndian.PutUint64(data[1:9], uint64(maxTime))
+	streamMeta.Write(data)
 
 	message := strings.Repeat("0123456789", 400000)
 	startTime := time.Now()

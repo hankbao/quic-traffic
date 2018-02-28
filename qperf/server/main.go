@@ -5,11 +5,14 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"math/big"
+	mrand "math/rand"
 	"time"
 
 	quic "github.com/lucas-clemente/quic-go"
@@ -17,94 +20,122 @@ import (
 	utils "bitbucket.org/qdeconinck/quic-traffic/utils"
 )
 
-var (
-	addr       = "localhost:4242"
-	firstByte  = make(chan byte)
-	maxTime    = 15 * time.Second
-	print      bool
-	readChan   chan int
-	stopChan   chan struct{}
+type clientHandler struct {
+	id uint64
+
+	readChan chan int
+	stopChan chan struct{}
+	timer    *utils.Timer
+
+	download   bool
 	stream     quic.Stream
 	streamMeta quic.Stream
-	timer      *utils.Timer
+	sess       quic.Session
+	firstByte  chan byte
+	print      bool
+	runTime    time.Duration
+	startTime  time.Time
+}
+
+var (
+	addr  = "localhost:4242"
+	print bool
 )
 
 const (
 	BufLen = 8000000
 )
 
+func myLogPrintf(id uint64, format string, v ...interface{}) {
+	s := fmt.Sprintf("%x: ", id)
+	log.Printf(s+format, v...)
+}
+
+func newClientHandler(sess quic.Session) *clientHandler {
+	ch := &clientHandler{
+		id:   uint64(mrand.Int63()),
+		sess: sess,
+	}
+	ch.readChan = make(chan int, 10)
+	ch.stopChan = make(chan struct{})
+	ch.firstByte = make(chan byte, 2)
+	// by default
+	ch.runTime = 15 * time.Second
+	return ch
+}
+
 // We start a server echoing data on the first stream the client opens,
 // then connect with a client, send the message, and wait for its receipt.
 func main() {
 	addrF := flag.String("addr", "localhost:4242", "Address to dial (client) / to listen (server)")
 	printF := flag.Bool("p", false, "Set this flag to print details for connections")
-	timeF := flag.Duration("time", 15*time.Second, "Maximum time for tests")
 
 	flag.Parse()
 
 	addr = *addrF
 	print = *printF
-	maxTime = *timeF
 	iperfServer()
 }
 
-func serverBandwidthTracker() {
+func (ch *clientHandler) serverBandwidthTracker() {
 	totalRead := 0
 	secRead := 0
 	log.Printf("IntervalInSec TransferredLastSecond GlobalBandwidth\n")
 	startTime := time.Now()
-	timer = utils.NewTimer()
-	timer.Reset(startTime.Add(time.Second))
+	ch.timer = utils.NewTimer()
+	ch.timer.Reset(startTime.Add(time.Second))
 	for {
 		select {
-		case <-stopChan:
+		case <-ch.stopChan:
 			log.Printf("- - - - - - - - - - - - - - -\n")
 			log.Printf("totalReceived %d duration %s\n", totalRead, time.Since(startTime))
 			return
-		case read := <-readChan:
+		case read := <-ch.readChan:
 			totalRead += read
 			secRead += read
 			break
-		case <-timer.Chan():
-			timer.SetRead()
+		case <-ch.timer.Chan():
+			ch.timer.SetRead()
 			elapsed := time.Since(startTime)
 			if elapsed != 0 {
 				log.Printf("%d-%d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, secRead, totalRead*1000000000/int(time.Since(startTime)/time.Nanosecond))
 			}
 			secRead = 0
-			timer.Reset(time.Now().Add(time.Second))
+			ch.timer.Reset(time.Now().Add(time.Second))
 			break
 		}
 	}
 }
 
-func startStreamMeta(sess quic.Session) {
+func (ch *clientHandler) startStreamMeta() {
 	var err error
-	streamMeta, err = sess.AcceptStream()
+	ch.streamMeta, err = ch.sess.AcceptStream()
 	if err != nil {
 		log.Printf("Got accept stream meta error: %v\n", err)
 		return
 	}
-	buf := make([]byte, 1)
-	_, _ = io.ReadFull(streamMeta, buf)
-	println("Got from stream meta", buf[0])
-	firstByte <- buf[0]
+	buf := make([]byte, 9)
+	_, _ = io.ReadFull(ch.streamMeta, buf)
+	runTimeNs := binary.BigEndian.Uint64(buf[1:9])
+	ch.runTime = time.Duration(runTimeNs)
+	println("Got from stream meta", buf[0], ch.runTime)
+	ch.firstByte <- buf[0]
 }
 
-func listenForStream() {
+func (ch *clientHandler) listenForStream() {
 	// Cope with old versions
 	buf := make([]byte, 1)
-	_, _ = io.ReadFull(stream, buf)
+	_, _ = io.ReadFull(ch.stream, buf)
 	println("Got from stream", buf[0])
-	firstByte <- buf[0]
+	ch.firstByte <- buf[0]
 }
 
 // Return true if it is download traffic
-func handleFirstPkt(sess quic.Session) bool {
-	go startStreamMeta(sess)
-	go listenForStream()
+func (ch *clientHandler) handleFirstPkt() bool {
+	go ch.startStreamMeta()
+	go ch.listenForStream()
 	select {
-	case data := <-firstByte:
+	case data := <-ch.firstByte:
 		if data == 'D' {
 			return true
 		}
@@ -112,29 +143,27 @@ func handleFirstPkt(sess quic.Session) bool {
 	}
 }
 
-func iperfServerHandleSession(sess quic.Session) {
+func (ch *clientHandler) iperfServerHandleSession() {
 	var err error
-	stream, err = sess.AcceptStream()
+	ch.stream, err = ch.sess.AcceptStream()
 	if err != nil {
 		log.Printf("Got accept stream error: %v\n", err)
 		return
 	}
-	log.Println("Accept new connection from", sess.RemoteAddr())
+	log.Println("Accept new connection from", ch.sess.RemoteAddr())
 	// From interoperability point of view, we are ready for both down and up perf
-	_ = handleFirstPkt(sess)
+	_ = ch.handleFirstPkt()
 	if print {
-		go serverBandwidthTracker()
+		go ch.serverBandwidthTracker()
 	}
-	readChan = make(chan int, 10)
-	stopChan = make(chan struct{})
 	buf := make([]byte, BufLen)
-	stream.SetDeadline(time.Now().Add(maxTime))
+	ch.stream.SetDeadline(time.Now().Add(ch.runTime))
 forLoop:
 	for {
-		read, err := io.ReadAtLeast(stream, buf, 1)
+		read, err := io.ReadAtLeast(ch.stream, buf, 1)
 		if read == 0 && err == io.EOF {
-			if print {
-				stopChan <- struct{}{}
+			if ch.print {
+				ch.stopChan <- struct{}{}
 				time.Sleep(time.Second)
 			}
 			break forLoop
@@ -144,11 +173,11 @@ forLoop:
 		}
 
 		// TODO do something
-		if print {
-			readChan <- read
+		if ch.print {
+			ch.readChan <- read
 		}
 	}
-	log.Println("Connection terminated from", sess.RemoteAddr())
+	log.Println("Connection terminated from", ch.sess.RemoteAddr())
 }
 
 func iperfServer() error {
@@ -162,7 +191,8 @@ func iperfServer() error {
 			log.Printf("Got accept error: %v\n", err)
 			continue
 		}
-		go iperfServerHandleSession(sess)
+		ch := newClientHandler(sess)
+		go ch.iperfServerHandleSession()
 	}
 	return err
 }
