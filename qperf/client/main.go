@@ -19,12 +19,14 @@ import (
 )
 
 var (
-	addr      = "localhost:4242"
-	multipath = false
-	timer     *utils.Timer
-	readChan  chan int
-	stopChan  chan struct{}
-	stream    quic.Stream
+	addr       = "localhost:4242"
+	download   = false
+	multipath  = false
+	timer      *utils.Timer
+	readChan   chan int
+	stopChan   chan struct{}
+	stream     quic.Stream
+	streamMeta quic.Stream
 )
 
 const (
@@ -37,11 +39,13 @@ func main() {
 	addrF := flag.String("addr", "localhost:4242", "Address to dial")
 	timeF := flag.Duration("t", 10*time.Second, "Time to run the experiment")
 	multipathF := flag.Bool("m", false, "multipath")
+	downloadF := flag.Bool("d", false, "download mode (instead of upload one)")
 
 	flag.Parse()
 
 	addr = *addrF
 	multipath = *multipathF
+	download = *downloadF
 	var err error
 
 	err = iperfClient(*timeF)
@@ -101,6 +105,17 @@ func iperfClient(maxTime time.Duration) error {
 		return err
 	}
 
+	streamMeta, err = session.OpenStreamSync()
+	if err != nil {
+		return err
+	}
+
+	if download {
+		streamMeta.Write([]byte("D"))
+	} else {
+		streamMeta.Write([]byte("U"))
+	}
+
 	message := strings.Repeat("0123456789", 400000)
 	startTime := time.Now()
 	go clientBandwidthTracker(startTime)
@@ -116,13 +131,15 @@ func iperfClient(maxTime time.Duration) error {
 			return nil
 		}
 		_, err := stream.Write([]byte(message))
-		if err.Error() == "deadline exceeded" {
+		if err != nil && err.Error() == "deadline exceeded" {
 			// Let the time to the test to end
 			stopChan <- struct{}{}
 			time.Sleep(time.Second)
 			return nil
 		}
-		return err
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

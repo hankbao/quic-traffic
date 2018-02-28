@@ -22,13 +22,15 @@ import (
 )
 
 var (
-	addr      = "localhost:4242"
-	multipath = false
-	timer     *utils.Timer
-	readChan  chan int
-	ret       string
-	stopChan  chan struct{}
-	stream    quic.Stream
+	addr       = "localhost:4242"
+	download   = false
+	multipath  = false
+	timer      *utils.Timer
+	readChan   chan int
+	ret        string
+	stopChan   chan struct{}
+	stream     quic.Stream
+	streamMeta quic.Stream
 )
 
 const (
@@ -58,6 +60,8 @@ func Run(cfg common.TrafficConfig) string {
 
 	addr = cfg.URL
 	var err error
+
+	// FIXME not collecting download. This is make on purpose: traffic is not ready yet...
 
 	err = iperfClient(quicConfig, cfg.RunTime)
 
@@ -109,6 +113,17 @@ func iperfClient(quicConfig *quic.Config, maxTime time.Duration) error {
 	stream, err = session.OpenStreamSync()
 	if err != nil {
 		return err
+	}
+
+	streamMeta, err = session.OpenStreamSync()
+	if err != nil {
+		return err
+	}
+
+	if download {
+		streamMeta.Write([]byte("D"))
+	} else {
+		streamMeta.Write([]byte("U"))
 	}
 
 	message := strings.Repeat("0123456789", 400000)

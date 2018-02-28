@@ -18,13 +18,15 @@ import (
 )
 
 var (
-	addr     = "localhost:4242"
-	maxTime  = 15 * time.Second
-	print    bool
-	readChan chan int
-	stopChan chan struct{}
-	stream   quic.Stream
-	timer    *utils.Timer
+	addr       = "localhost:4242"
+	firstByte  = make(chan byte)
+	maxTime    = 15 * time.Second
+	print      bool
+	readChan   chan int
+	stopChan   chan struct{}
+	stream     quic.Stream
+	streamMeta quic.Stream
+	timer      *utils.Timer
 )
 
 const (
@@ -76,13 +78,50 @@ func serverBandwidthTracker() {
 	}
 }
 
+func startStreamMeta(sess quic.Session) {
+	var err error
+	streamMeta, err = sess.AcceptStream()
+	if err != nil {
+		log.Printf("Got accept stream meta error: %v\n", err)
+		return
+	}
+	buf := make([]byte, 1)
+	_, _ = io.ReadFull(streamMeta, buf)
+	println("Got from stream meta", buf[0])
+	firstByte <- buf[0]
+}
+
+func listenForStream() {
+	// Cope with old versions
+	buf := make([]byte, 1)
+	_, _ = io.ReadFull(stream, buf)
+	println("Got from stream", buf[0])
+	firstByte <- buf[0]
+}
+
+// Return true if it is download traffic
+func handleFirstPkt(sess quic.Session) bool {
+	go startStreamMeta(sess)
+	go listenForStream()
+	select {
+	case data := <-firstByte:
+		if data == 'D' {
+			return true
+		}
+		return false
+	}
+}
+
 func iperfServerHandleSession(sess quic.Session) {
-	stream, err := sess.AcceptStream()
+	var err error
+	stream, err = sess.AcceptStream()
 	if err != nil {
 		log.Printf("Got accept stream error: %v\n", err)
 		return
 	}
 	log.Println("Accept new connection from", sess.RemoteAddr())
+	// From interoperability point of view, we are ready for both down and up perf
+	_ = handleFirstPkt(sess)
 	if print {
 		go serverBandwidthTracker()
 	}
