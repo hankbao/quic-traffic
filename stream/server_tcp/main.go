@@ -48,8 +48,6 @@ var (
 	addr               = "localhost:4242"
 	clientHandlers     = make(map[uint64]*clientHandler)
 	clientHandlersLock sync.RWMutex
-	// FIXME REMOVE ME
-	listener *net.TCPListener
 )
 
 func myLogPrintf(id uint64, format string, v ...interface{}) {
@@ -213,7 +211,7 @@ func streamServer() error {
 	if err != nil {
 		return err
 	}
-	listener, err = net.ListenTCP("tcp", tcpAddr)
+	listener, err := net.ListenTCP("tcp", tcpAddr)
 	if err != nil {
 		return err
 	}
