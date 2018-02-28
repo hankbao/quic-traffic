@@ -118,7 +118,8 @@ func (ch *clientHandler) parseFormatMetaPacket(data []byte) bool {
 	}
 	ch.connID = binary.BigEndian.Uint64(data[6:14])
 	runTimeNs := binary.BigEndian.Uint64(data[14:22])
-	ch.runTime = time.Duration(runTimeNs)
+	// Add one second to be more gentle
+	ch.runTime = time.Duration(runTimeNs) + time.Second
 
 	return true
 }

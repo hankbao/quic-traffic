@@ -117,7 +117,8 @@ func (ch *clientHandler) startStreamMeta() {
 	buf := make([]byte, 9)
 	_, _ = io.ReadFull(ch.streamMeta, buf)
 	runTimeNs := binary.BigEndian.Uint64(buf[1:9])
-	ch.runTime = time.Duration(runTimeNs)
+	// Add 1 second to be more gentle
+	ch.runTime = time.Duration(runTimeNs) + time.Second
 	println("Got from stream meta", buf[0], ch.runTime)
 	ch.firstByte <- buf[0]
 }
