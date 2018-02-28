@@ -132,7 +132,7 @@ func parseFirstDataPacket(data []byte) (uint64, bool) {
 		return 0, false
 	}
 	if data[4] != 'D' {
-		log.Printf("Invalid prefix: %s", data[4])
+		log.Printf("Invalid prefix: %d", data[4])
 		return 0, false
 	}
 	connID := binary.BigEndian.Uint64(data[5:13])
