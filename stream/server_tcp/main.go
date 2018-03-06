@@ -178,6 +178,7 @@ func handleFirstPacket(tcpConn *net.TCPConn) {
 	_, err = io.ReadFull(tcpConn, bufLenWithPrefix)
 	if err != nil {
 		log.Printf("Read error when starting: %v\n", err)
+		log.Printf("Close connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
 		tcpConn.Close()
 		return
 	}
@@ -187,18 +188,21 @@ func handleFirstPacket(tcpConn *net.TCPConn) {
 	} else if bufLenWithPrefix[4] == 'U' {
 		remainingBuf = make([]byte, 8) // 13 - 5
 	} else {
+		log.Printf("Close connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
 		tcpConn.Close()
 		return
 	}
 	_, err = io.ReadFull(tcpConn, remainingBuf)
 	if err != nil {
 		log.Printf("Read error when starting: %v\n", err)
+		log.Printf("Close connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
 		tcpConn.Close()
 		return
 	}
 	data := append(bufLenWithPrefix, remainingBuf...)
 	if !parseFirstPacket(tcpConn, data) {
 		log.Printf("Invalid format for start packet\n")
+		log.Printf("Close connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
 		tcpConn.Close()
 		return
 	}
