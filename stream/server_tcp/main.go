@@ -166,6 +166,7 @@ func parseFirstPacket(tcpConn *net.TCPConn, data []byte) bool {
 		return true
 	}
 	log.Printf("Unknown prefix for first packet: %v\n", data[4])
+	log.Printf("Close connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
 	tcpConn.Close()
 	return false
 }
@@ -174,6 +175,7 @@ func handleFirstPacket(tcpConn *net.TCPConn) {
 	var err error
 	log.Printf("Accept new connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
 
+	tcpConn.SetDeadline(time.Now().Add(5 * time.Second))
 	bufLenWithPrefix := make([]byte, 5)
 	_, err = io.ReadFull(tcpConn, bufLenWithPrefix)
 	if err != nil {

@@ -200,6 +200,7 @@ func parseFirstPacket(tcpConn *net.TCPConn, data []byte) bool {
 func handleFirstPacket(tcpConn *net.TCPConn) {
 	var err error
 	log.Printf("Accept new connection on %v from %v\n", tcpConn.LocalAddr(), tcpConn.RemoteAddr())
+	tcpConn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Format is fixed:
 	// Meta conn: [Length(4)|'M'(1)|{'D' or 'U'(1)}|connID(8)|runTimeNs(8)]
@@ -268,6 +269,7 @@ func (ch *clientHandler) handle() {
 	}
 	buf := make([]byte, BufLen)
 	if ch.runTime > 0 {
+		ch.metaConn.SetDeadline(time.Now().Add(ch.runTime))
 		ch.dataConn.SetDeadline(time.Now().Add(ch.runTime))
 	}
 forLoop:
