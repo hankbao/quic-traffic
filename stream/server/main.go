@@ -78,19 +78,23 @@ func main() {
 
 // Start a server that performs similar traffic to Siri servers
 func streamServer() error {
+	var err error
 	mrand.Seed(time.Now().UTC().UnixNano())
-	listener, err := quic.ListenAddr(addr, generateTLSConfig(), nil)
-	if err != nil {
-		return err
-	}
 	for {
-		sess, err := listener.Accept()
+		listener, err := quic.ListenAddr(addr, generateTLSConfig(), nil)
 		if err != nil {
-			log.Printf("Got accept error: %v\n", err)
-			continue
+			return err
 		}
-		ch := newClientHandler(sess)
-		go ch.handle()
+	listenLoop:
+		for {
+			sess, err := listener.Accept()
+			if err != nil {
+				log.Printf("Got accept error: %v\n", err)
+				break listenLoop
+			}
+			ch := newClientHandler(sess)
+			go ch.handle()
+		}
 	}
 	return err
 }

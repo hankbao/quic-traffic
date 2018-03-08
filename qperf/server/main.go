@@ -182,18 +182,22 @@ forLoop:
 }
 
 func iperfServer() error {
-	listener, err := quic.ListenAddr(addr, generateTLSConfig(), nil)
-	if err != nil {
-		return err
-	}
+	var err error
 	for {
-		sess, err := listener.Accept()
+		listener, err := quic.ListenAddr(addr, generateTLSConfig(), nil)
 		if err != nil {
-			log.Printf("Got accept error: %v\n", err)
-			continue
+			return err
 		}
-		ch := newClientHandler(sess)
-		go ch.iperfServerHandleSession()
+	listenLoop:
+		for {
+			sess, err := listener.Accept()
+			if err != nil {
+				log.Printf("Got accept error: %v\n", err)
+				break listenLoop
+			}
+			ch := newClientHandler(sess)
+			go ch.iperfServerHandleSession()
+		}
 	}
 	return err
 }
