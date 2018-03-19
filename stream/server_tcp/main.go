@@ -369,6 +369,7 @@ listenLoop:
 			break listenLoop
 		}
 		ackedMsgID := ackMsgID - 1
+		ch.nxtAckMsgID++
 		ch.delaysLock.Lock()
 		sent, ok := ch.sentTime[ackedMsgID]
 		if !ok {
@@ -378,7 +379,6 @@ listenLoop:
 		ch.delays = append(ch.delays, rcvTime.Sub(sent))
 		delete(ch.sentTime, ackedMsgID)
 		ch.delaysLock.Unlock()
-		ch.nxtAckMsgID++
 	}
 	if ch.connDown != nil {
 		ch.connDown.Close()
