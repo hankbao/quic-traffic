@@ -281,9 +281,12 @@ func (ch *clientHandler) sendData() error {
 	// Don't forget to indicate how many delays were written
 	binary.BigEndian.PutUint32(data[9:13], uint32(i))
 
-	ch.sentTime[ch.nxtMessageID] = time.Now()
+	sentTime := time.Now()
 	_, err := ch.connDown.Write(data)
 	ch.nxtMessageID++
+	ch.delaysLock.Lock()
+	ch.sentTime[ch.nxtMessageID] = sentTime
+	ch.delaysLock.Unlock()
 	return err
 }
 
@@ -366,14 +369,15 @@ listenLoop:
 			break listenLoop
 		}
 		ackedMsgID := ackMsgID - 1
+		ch.delaysLock.Lock()
 		sent, ok := ch.sentTime[ackedMsgID]
 		if !ok {
+			ch.delaysLock.Unlock()
 			continue
 		}
-		ch.delaysLock.Lock()
 		ch.delays = append(ch.delays, rcvTime.Sub(sent))
-		ch.delaysLock.Unlock()
 		delete(ch.sentTime, ackedMsgID)
+		ch.delaysLock.Unlock()
 		ch.nxtAckMsgID++
 	}
 	if ch.connDown != nil {
