@@ -309,6 +309,9 @@ func (ch *clientHandler) checkFormatClientData(data []byte) (uint32, bool) {
 func (ch *clientHandler) serverSenderDown() {
 	if ch.runTime > 0 {
 		ch.connDown.SetDeadline(time.Now().Add(ch.runTime))
+	} else {
+		print("No deadline")
+		ch.connDown.SetDeadline(time.Time{})
 	}
 sendLoop:
 	for {
@@ -394,6 +397,9 @@ func (ch *clientHandler) handle() {
 
 	if ch.runTime > 0 {
 		ch.connUp.SetDeadline(time.Now().Add(ch.runTime))
+	} else {
+		print("No deadline")
+		ch.connUp.SetDeadline(time.Time{})
 	}
 	buf := make([]byte, ch.uploadChunkSize)
 
