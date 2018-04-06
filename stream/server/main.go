@@ -149,10 +149,11 @@ func (ch *clientHandler) sendData() error {
 	binary.BigEndian.PutUint32(data[9:13], uint32(i))
 
 	sentTime := time.Now()
+	msgID := ch.nxtMessageID
 	_, err := ch.streamDown.Write(data)
 	ch.nxtMessageID++
 	ch.delaysLock.Lock()
-	ch.sentTime[ch.nxtMessageID] = sentTime
+	ch.sentTime[msgID] = sentTime
 	ch.delaysLock.Unlock()
 	return err
 }
