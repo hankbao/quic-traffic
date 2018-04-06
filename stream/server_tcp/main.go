@@ -281,9 +281,12 @@ func (ch *clientHandler) sendData() error {
 	// Don't forget to indicate how many delays were written
 	binary.BigEndian.PutUint32(data[9:13], uint32(i))
 
-	ch.sentTime[ch.nxtMessageID] = time.Now()
+	sentTime := time.Now()
 	_, err := ch.connDown.Write(data)
 	ch.nxtMessageID++
+	ch.delaysLock.Lock()
+	ch.sentTime[ch.nxtMessageID] = sentTime
+	ch.delaysLock.Unlock()
 	return err
 }
 
@@ -306,6 +309,9 @@ func (ch *clientHandler) checkFormatClientData(data []byte) (uint32, bool) {
 func (ch *clientHandler) serverSenderDown() {
 	if ch.runTime > 0 {
 		ch.connDown.SetDeadline(time.Now().Add(ch.runTime))
+	} else {
+		print("No deadline")
+		ch.connDown.SetDeadline(time.Time{})
 	}
 sendLoop:
 	for {
@@ -366,15 +372,16 @@ listenLoop:
 			break listenLoop
 		}
 		ackedMsgID := ackMsgID - 1
+		ch.nxtAckMsgID++
+		ch.delaysLock.Lock()
 		sent, ok := ch.sentTime[ackedMsgID]
 		if !ok {
+			ch.delaysLock.Unlock()
 			continue
 		}
-		ch.delaysLock.Lock()
 		ch.delays = append(ch.delays, rcvTime.Sub(sent))
-		ch.delaysLock.Unlock()
 		delete(ch.sentTime, ackedMsgID)
-		ch.nxtAckMsgID++
+		ch.delaysLock.Unlock()
 	}
 	if ch.connDown != nil {
 		ch.connDown.Close()
@@ -390,6 +397,9 @@ func (ch *clientHandler) handle() {
 
 	if ch.runTime > 0 {
 		ch.connUp.SetDeadline(time.Now().Add(ch.runTime))
+	} else {
+		print("No deadline")
+		ch.connUp.SetDeadline(time.Time{})
 	}
 	buf := make([]byte, ch.uploadChunkSize)
 
