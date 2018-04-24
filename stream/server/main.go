@@ -81,6 +81,7 @@ func streamServer() error {
 	var err error
 	mrand.Seed(time.Now().UTC().UnixNano())
 	cfg := &quic.Config{
+		MaxPathID:     0xff, // Grant this ability by default for a server
 		MaxRTOTimeout: 600 * time.Millisecond,
 	}
 	for {
