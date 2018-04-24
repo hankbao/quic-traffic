@@ -102,3 +102,7 @@ func GetStreamProgressResult(notifyID string) string {
 func StopStream(notifyID string) {
 	stream.StopStream(notifyID)
 }
+
+func GetQPerfResults(notifyID string) string {
+	return qperf.GetResults(notifyID)
+}

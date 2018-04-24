@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	quic "github.com/lucas-clemente/quic-go"
@@ -19,7 +20,9 @@ import (
 type serverHandler struct {
 	download   bool
 	timer      *utils.Timer
+	notifyID   string
 	readChan   chan int
+	ret        string
 	runTime    time.Duration
 	startTime  time.Time
 	stopChan   chan struct{}
@@ -28,8 +31,9 @@ type serverHandler struct {
 }
 
 var (
-	addr = "localhost:4242"
-	ret  string
+	addr     = "localhost:4242"
+	handlers = make(map[string]*serverHandler)
+	mutex    sync.RWMutex
 )
 
 const (
@@ -42,6 +46,17 @@ func newServerHandler(runTime time.Duration) *serverHandler {
 	ch.stopChan = make(chan struct{})
 	ch.runTime = runTime
 	return ch
+}
+
+// GetResults of iperf so far
+func GetResults(notifyID string) string {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	sh, ok := handlers[notifyID]
+	if !ok {
+		return ""
+	}
+	return sh.ret
 }
 
 // We start a server echoing data on the first stream the client opens,
@@ -70,13 +85,19 @@ func Run(cfg common.TrafficConfig) string {
 
 	// FIXME not collecting download. This is make on purpose: traffic is not ready yet...
 	sh := newServerHandler(cfg.RunTime)
+	mutex.Lock()
+	handlers[cfg.NotifyID] = sh
+	mutex.Unlock()
 	err = sh.iperfClient(quicConfig)
+	mutex.Lock()
+	delete(handlers, cfg.NotifyID)
+	mutex.Unlock()
 
 	if err != nil {
 		return err.Error()
 	}
 
-	return ret
+	return sh.ret
 }
 
 func (sh *serverHandler) printIntervalLine(lastTotalSent quic.ByteCount, lastTotalRetrans quic.ByteCount) (quic.ByteCount, quic.ByteCount) {
@@ -84,7 +105,7 @@ func (sh *serverHandler) printIntervalLine(lastTotalSent quic.ByteCount, lastTot
 	totalSent := sh.stream.GetBytesSent()
 	totalRetrans := sh.stream.GetBytesRetrans()
 	if elapsed != 0 {
-		ret += fmt.Sprintf("%d-%d %d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, totalSent-lastTotalSent, totalSent*1000000000/quic.ByteCount(time.Since(sh.startTime)/time.Nanosecond), totalRetrans-lastTotalRetrans)
+		sh.ret += fmt.Sprintf("%d-%d %d %d %d\n", elapsed/time.Second-1, elapsed/time.Second, totalSent-lastTotalSent, totalSent*1000000000/quic.ByteCount(time.Since(sh.startTime)/time.Nanosecond), totalRetrans-lastTotalRetrans)
 	}
 	return totalSent, totalRetrans
 }
@@ -92,15 +113,15 @@ func (sh *serverHandler) printIntervalLine(lastTotalSent quic.ByteCount, lastTot
 func (sh *serverHandler) clientBandwidthTracker() {
 	var lastTotalSent quic.ByteCount
 	var lastTotalRetrans quic.ByteCount
-	ret += fmt.Sprintf("IntervalInSec TransferredLastSecond GlobalBandwidth RetransmittedLastSecond\n")
+	sh.ret += fmt.Sprintf("IntervalInSec TransferredLastSecond GlobalBandwidth RetransmittedLastSecond\n")
 	sh.timer = utils.NewTimer()
 	sh.timer.Reset(sh.startTime.Add(time.Second))
 	for {
 		select {
 		case <-sh.stopChan:
 			totalSent, totalRetrans := sh.printIntervalLine(lastTotalSent, lastTotalRetrans)
-			ret += fmt.Sprintf("- - - - - - - - - - - - - - -\n")
-			ret += fmt.Sprintf("totalSent %d duration %s totalRetrans %d\n", totalSent, time.Since(sh.startTime), totalRetrans)
+			sh.ret += fmt.Sprintf("- - - - - - - - - - - - - - -\n")
+			sh.ret += fmt.Sprintf("totalSent %d duration %s totalRetrans %d\n", totalSent, time.Since(sh.startTime), totalRetrans)
 			return
 		case <-sh.timer.Chan():
 			sh.timer.SetRead()
