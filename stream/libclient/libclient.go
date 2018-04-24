@@ -375,7 +375,9 @@ func (sh *serverHandler) handle(cfg common.TrafficConfig) error {
 	cfgClient := &quic.Config{
 		MaxPathID:        cfg.MaxPathID,
 		MultipathService: cfg.MultipathService,
-		NotifyID:         cfg.NotifyID,
+		// hardcoded now...
+		MaxRTOTimeout: 600 * time.Millisecond,
+		NotifyID:      cfg.NotifyID,
 	}
 	fmt.Println("Trying to connect...")
 	var err error

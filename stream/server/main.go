@@ -80,8 +80,11 @@ func main() {
 func streamServer() error {
 	var err error
 	mrand.Seed(time.Now().UTC().UnixNano())
+	cfg := &quic.Config{
+		MaxRTOTimeout: 600 * time.Millisecond,
+	}
 	for {
-		listener, err := quic.ListenAddr(addr, generateTLSConfig(), nil)
+		listener, err := quic.ListenAddr(addr, generateTLSConfig(), cfg)
 		if err != nil {
 			return err
 		}
