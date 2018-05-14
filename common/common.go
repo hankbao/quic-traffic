@@ -22,4 +22,7 @@ type TrafficConfig struct {
 
 	// For interactive, qperf, stream
 	RunTime time.Duration
+
+	// For udping
+	WifiProbe bool
 }

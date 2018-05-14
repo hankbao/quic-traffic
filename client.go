@@ -12,6 +12,7 @@ import (
 	reqres "bitbucket.org/qdeconinck/quic-traffic/reqres/libclient"
 	siri "bitbucket.org/qdeconinck/quic-traffic/siri/libclient"
 	stream "bitbucket.org/qdeconinck/quic-traffic/stream/libclient"
+	udping "bitbucket.org/qdeconinck/quic-traffic/udping/libclient"
 )
 
 // RunConfig provides needed configuration
@@ -105,4 +106,8 @@ func StopStream(notifyID string) {
 
 func GetQPerfResults(notifyID string) string {
 	return qperf.GetResults(notifyID)
+}
+
+func StopUdping(notifyID string) {
+	udping.StopTraffic(notifyID)
 }
