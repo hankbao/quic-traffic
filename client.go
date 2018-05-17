@@ -30,6 +30,7 @@ type RunConfig interface {
 	RunTime() int // in seconds
 	Traffic() string
 	URL() string
+	WifiProbe() bool
 }
 
 // Run the QUIC traffic experiment
@@ -48,6 +49,7 @@ func Run(runcfg RunConfig) string {
 		PrintBody:  runcfg.PrintBody(),
 		URL:        runcfg.URL(),
 		RunTime:    time.Duration(runcfg.RunTime()) * time.Second,
+		WifiProbe:  runcfg.WifiProbe(),
 	}
 	logFile := runcfg.LogFile()
 	if strings.HasPrefix(logFile, "file://") {
@@ -76,6 +78,8 @@ func Run(runcfg RunConfig) string {
 		res = siri.Run(cfg)
 	case "stream":
 		res = stream.Run(cfg)
+	case "udping":
+		res = udping.Run(cfg)
 	default:
 		res = "Unknown traffic"
 	}

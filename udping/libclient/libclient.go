@@ -55,7 +55,6 @@ func StopTraffic(notifyID string) {
 
 // Run udping
 func Run(cfg common.TrafficConfig) string {
-	println("Go")
 	sh := &serverHandler{
 		addr:         cfg.URL,
 		buffer:       new(bytes.Buffer),
@@ -81,7 +80,6 @@ func (sh *serverHandler) printer() string {
 		sh.buffer.WriteString(fmt.Sprintf("%d,%d\n", d.ts.UnixNano(), int64(d.delay/time.Microsecond)))
 	}
 	sh.delaysLock.Unlock()
-	time.Sleep(time.Second)
 	return sh.buffer.String()
 }
 
@@ -92,6 +90,7 @@ func (sh *serverHandler) isProbingInterface(i net.Interface) bool {
 func (sh *serverHandler) determineLocalAddr() *net.UDPAddr {
 	ifaces, err := net.Interfaces()
 	if err != nil {
+		println(err.Error())
 		return nil
 	}
 	for _, i := range ifaces {
@@ -102,17 +101,33 @@ func (sh *serverHandler) determineLocalAddr() *net.UDPAddr {
 		if sh.isProbingInterface(i) {
 			addrs, err := i.Addrs()
 			if err != nil {
+				println(err.Error())
 				continue
 			}
 			if len(addrs) == 0 {
+				println("Don't have any address...")
 				continue
 			}
 			// Addresses are stored in increasing importance
-			addr, err := net.ResolveUDPAddr("udp", addrs[len(addrs)-1].String())
-			if err != nil {
-				continue
+		ipLoop:
+			for k := len(addrs) - 1; k >= 0; k-- {
+				ip, _, err := net.ParseCIDR(addrs[k].String())
+				addrStr := ip.String() + ":0"
+				if ip.To4() == nil {
+					ip = ip.To16()
+					// It's a v6, but it is valid?
+					if ip[0] >= 0xfd {
+						continue ipLoop
+					}
+					addrStr = "[" + ip.String() + "]:0"
+				}
+				addr, err := net.ResolveUDPAddr("udp", addrStr)
+				if err != nil {
+					println(err.Error())
+					continue ipLoop
+				}
+				return addr
 			}
-			return addr
 		}
 	}
 	return nil
@@ -138,7 +153,6 @@ func (sh *serverHandler) receiveLoop() {
 			println(msgID, sh.nxtMessageID)
 			continue
 		}
-		println("Received pkt")
 		sentTime := time.Unix(0, int64(sentTimeUnix))
 		delay := rcvTime.Sub(sentTime)
 		sh.delays = append(sh.delays, tsDelay{ts: sentTime, delay: delay})
@@ -147,17 +161,19 @@ func (sh *serverHandler) receiveLoop() {
 
 func (sh *serverHandler) handle(cfg common.TrafficConfig) {
 	var err error
-	println("Handling...")
 	sh.remAddr, err = net.ResolveUDPAddr("udp", sh.addr)
 	if err != nil {
+		println(err.Error())
 		return
 	}
 	sh.locAddr = sh.determineLocalAddr()
 	if sh.locAddr == nil {
+		println("Cannot determine my address")
 		return
 	}
 	sh.udpConn, err = net.DialUDP("udp", sh.locAddr, sh.remAddr)
 	if err != nil {
+		println(err.Error())
 		return
 	}
 	go sh.receiveLoop()
